@@ -4,20 +4,21 @@
 
 #pragma once
 #include "canceler.h"
+
 #include <kj/compat/http.h>
 
 namespace workerd {
 
 template <typename T>
 class AbortableImpl final {
-public:
+ public:
   AbortableImpl(kj::Own<T> inner, RefcountedCanceler& canceler)
       : canceler(kj::addRef(canceler)),
         inner(kj::mv(inner)),
-        onCancel(*(this->canceler), [this]() { this->inner = nullptr; }) {}
+        onCancel(*(this->canceler), [this]() { this->inner = kj::none; }) {}
 
-  template <typename V, typename... Args, typename...ArgsT>
-  kj::Promise<V> wrap(kj::Promise<V>(T::*fn)(ArgsT...), Args&&...args) {
+  template <typename V, typename... Args, typename... ArgsT>
+  kj::Promise<V> wrap(kj::Promise<V> (T::*fn)(ArgsT...), Args&&... args) {
     return wrap([&](T& inner) { return (inner.*fn)(kj::fwd<ArgsT>(args)...); });
   }
 
@@ -36,23 +37,26 @@ public:
     return *(KJ_ASSERT_NONNULL(inner));
   }
 
-private:
+  kj::Maybe<T&> tryGetInner() {
+    return inner;
+  }
+
+ private:
   kj::Own<RefcountedCanceler> canceler;
   kj::Maybe<kj::Own<T>> inner;
   RefcountedCanceler::Listener onCancel;
 };
 
-class AbortableInputStream final: public kj::AsyncInputStream,
-                                  public kj::Refcounted {
-  // An InputStream that can be disconnected in response to RefcountedCanceler.
-  // This is similar to NeuterableInputStream in global-scope.c++ but uses an
-  // external kj::Canceler to trigger the disconnect.
-  // This is currently only used in fetch() requests that use an AbortSignal.
-  // The AbortableInputStream is created using a RefcountedCanceler,
-  // which will be triggered when the AbortSignal is triggered.
-  // TODO(later): It would be good to see if both this and NeuterableInputStream
-  // could be combined into a single utility.
-public:
+// An InputStream that can be disconnected in response to RefcountedCanceler.
+// This is similar to NeuterableInputStream in global-scope.c++ but uses an
+// external kj::Canceler to trigger the disconnect.
+// This is currently only used in fetch() requests that use an AbortSignal.
+// The AbortableInputStream is created using a RefcountedCanceler,
+// which will be triggered when the AbortSignal is triggered.
+// TODO(later): It would be good to see if both this and NeuterableInputStream
+// could be combined into a single utility.
+class AbortableInputStream final: public kj::AsyncInputStream, public kj::Refcounted {
+ public:
   AbortableInputStream(kj::Own<kj::AsyncInputStream> inner, RefcountedCanceler& canceler)
       : impl(kj::mv(inner), canceler) {}
 
@@ -72,42 +76,46 @@ public:
     return impl.wrap(&kj::AsyncInputStream::pumpTo, output, amount);
   }
 
-private:
+ private:
   AbortableImpl<kj::AsyncInputStream> impl;
 };
 
-class AbortableWebSocket final: public kj::WebSocket,
-                                public kj::Refcounted {
-  // A WebSocket wrapper that can be disconnected in response to a RefcountedCanceler.
-  // This is currently only used when opening a WebSocket with a fetch() request that
-  // is using an AbortSignal. The AbortableWebSocket is created using the AbortSignal's
-  // RefcountedCanceler, which will be triggered when the AbortSignal is triggered.
-public:
+// A WebSocket wrapper that can be disconnected in response to a RefcountedCanceler.
+// This is currently only used when opening a WebSocket with a fetch() request that
+// is using an AbortSignal. The AbortableWebSocket is created using the AbortSignal's
+// RefcountedCanceler, which will be triggered when the AbortSignal is triggered.
+class AbortableWebSocket final: public kj::WebSocket, public kj::Refcounted {
+ public:
   AbortableWebSocket(kj::Own<kj::WebSocket> inner, RefcountedCanceler& canceler)
       : impl(kj::mv(inner), canceler) {}
 
   kj::Promise<void> send(kj::ArrayPtr<const kj::byte> message) override {
     return impl.wrap(
-        static_cast<kj::Promise<void>(kj::WebSocket::*)(kj::ArrayPtr<const kj::byte>)>(
-            &kj::WebSocket::send), message);
+        static_cast<kj::Promise<void> (kj::WebSocket::*)(kj::ArrayPtr<const kj::byte>)>(
+            &kj::WebSocket::send),
+        message);
   }
 
   kj::Promise<void> send(kj::ArrayPtr<const char> message) override {
-    return impl.wrap(
-        static_cast<kj::Promise<void>(kj::WebSocket::*)(kj::ArrayPtr<const char>)>(
-            &kj::WebSocket::send), message);
+    return impl.wrap(static_cast<kj::Promise<void> (kj::WebSocket::*)(kj::ArrayPtr<const char>)>(
+                         &kj::WebSocket::send),
+        message);
   }
 
   kj::Promise<void> close(uint16_t code, kj::StringPtr reason) override {
     return impl.wrap(&kj::WebSocket::close, code, reason);
   }
 
-  kj::Promise<void> disconnect() override {
-    return impl.wrap(&kj::WebSocket::disconnect);
+  void disconnect() override {
+    KJ_IF_SOME(inner, impl.tryGetInner()) {
+      inner.disconnect();
+    }
   }
 
   void abort() override {
-    impl.getInner().abort();
+    KJ_IF_SOME(inner, impl.tryGetInner()) {
+      inner.abort();
+    }
   }
 
   kj::Promise<void> whenAborted() override {
@@ -134,8 +142,12 @@ public:
     return impl.getInner().receivedByteCount();
   }
 
-private:
+  kj::Maybe<kj::String> getPreferredExtensions(ExtensionsContext ctx) override {
+    return impl.getInner().getPreferredExtensions(ctx);
+  };
+
+ private:
   AbortableImpl<kj::WebSocket> impl;
 };
 
-} // namespace workerd
+}  // namespace workerd

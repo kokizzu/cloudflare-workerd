@@ -17,8 +17,10 @@ export const knownPackages: Record<string, string> = {
   "darwin x64 LE": "@cloudflare/workerd-darwin-64",
   "linux arm64 LE": "@cloudflare/workerd-linux-arm64",
   "linux x64 LE": "@cloudflare/workerd-linux-64",
-  "win32 x64 LE": "@cloudflare/workerd-linux-64",
+  "win32 x64 LE": "@cloudflare/workerd-windows-64",
 };
+
+const maybeExeExtension = process.platform === "win32" ? ".exe" : "";
 
 export function pkgAndSubpathForCurrentPlatform(): {
   pkg: string;
@@ -30,7 +32,7 @@ export function pkgAndSubpathForCurrentPlatform(): {
 
   if (platformKey in knownPackages) {
     pkg = knownPackages[platformKey];
-    subpath = "bin/workerd";
+    subpath = `bin/workerd${maybeExeExtension}`;
   } else {
     throw new Error(`Unsupported platform: ${platformKey}`);
   }
@@ -58,7 +60,7 @@ function pkgForSomeOtherPlatform(): string | null {
 
 export function downloadedBinPath(pkg: string, subpath: string): string {
   const libDir = path.dirname(require.resolve("workerd"));
-  return path.join(libDir, `downloaded-${pkg}-${path.basename(subpath)}`);
+  return path.join(libDir, `downloaded-${pkg.replace("/", "-")}-${path.basename(subpath)}${maybeExeExtension}`);
 }
 
 export function generateBinPath(): { binPath: string } {
@@ -160,7 +162,7 @@ by workerd to install the correct binary executable for your current platform.`)
       "node_modules",
       ".cache",
       "workerd",
-      `pnpapi-${pkg}-${WORKERD_VERSION}-${path.basename(subpath)}`
+      `pnpapi-${pkg.replace("/", "-")}-${WORKERD_VERSION}-${path.basename(subpath)}`
     );
     if (!fs.existsSync(binTargetPath)) {
       fs.mkdirSync(path.dirname(binTargetPath), { recursive: true });

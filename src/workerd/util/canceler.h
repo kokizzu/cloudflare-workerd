@@ -3,34 +3,37 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 #pragma once
-#include <kj/async-io.h>
+#include <kj/async.h>
 #include <kj/common.h>
 #include <kj/debug.h>
-#include <kj/refcount.h>
+#include <kj/function.h>
 #include <kj/list.h>
+#include <kj/refcount.h>
 
 namespace workerd {
 
+// A simple wrapper around kj::Canceler that can be safely
+// shared by multiple objects. This is used, for instance,
+// to support fetch() requests that use an AbortSignal.
+// The AbortSignal (see api/basics.h) creates an instance
+// of RefcountedCanceler then passes references to it out
+// to various other objects that will use it to wrap their
+// Promises.
 class RefcountedCanceler: public kj::Refcounted {
-  // A simple wrapper around kj::Canceler that can be safely
-  // shared by multiple objects. This is used, for instance,
-  // to support fetch() requests that use an AbortSignal.
-  // The AbortSignal (see api/basics.h) creates an instance
-  // of RefcountedCanceler then passes references to it out
-  // to various other objects that will use it to wrap their
-  // Promises.
-public:
+ public:
   class Listener {
-  public:
+   public:
     explicit Listener(RefcountedCanceler& canceler, kj::Function<void()> fn)
-      : fn(kj::mv(fn)),
-        canceler(canceler) {
+        : fn(kj::mv(fn)),
+          canceler(canceler) {
       canceler.addListener(*this);
     }
 
-    ~Listener() { canceler.removeListener(*this); }
+    ~Listener() {
+      canceler.removeListener(*this);
+    }
 
-  private:
+   private:
     kj::Function<void()> fn;
     RefcountedCanceler& canceler;
     kj::ListLink<Listener> link;
@@ -38,7 +41,7 @@ public:
     friend class RefcountedCanceler;
   };
 
-  RefcountedCanceler(kj::Maybe<kj::Exception> reason = nullptr): reason(kj::mv(reason)) {}
+  RefcountedCanceler(kj::Maybe<kj::Exception> reason = kj::none): reason(kj::mv(reason)) {}
 
   ~RefcountedCanceler() noexcept(false) {
     // `listeners` has to be empty since each listener should have held a strong reference.
@@ -53,38 +56,42 @@ public:
 
   template <typename T>
   kj::Promise<T> wrap(kj::Promise<T> promise) {
-    KJ_IF_MAYBE(ex, reason) {
-      return kj::cp(*ex);
+    KJ_IF_SOME(ex, reason) {
+      return kj::cp(ex);
     }
     return canceler.wrap(kj::mv(promise));
   }
 
   void cancel(kj::StringPtr cancelReason) {
-    if (reason == nullptr) {
-      cancel(kj::Exception(kj::Exception::Type::DISCONNECTED, __FILE__, __LINE__,
-                           kj::str(cancelReason)));
+    if (reason == kj::none) {
+      cancel(kj::Exception(
+          kj::Exception::Type::DISCONNECTED, __FILE__, __LINE__, kj::str(cancelReason)));
     }
   }
 
   void cancel(const kj::Exception& exception) {
-    if (reason == nullptr) {
+    if (reason == kj::none) {
       reason = kj::cp(exception);
       canceler.cancel(exception);
-      for (auto& listener : listeners) {
+      for (auto& listener: listeners) {
         listener.fn();
       }
     }
   }
 
-  bool isEmpty() const { return canceler.isEmpty(); }
+  bool isEmpty() const {
+    return canceler.isEmpty();
+  }
 
   void throwIfCanceled() {
-    KJ_IF_MAYBE(ex, reason) {
-      kj::throwFatalException(kj::cp(*ex));
+    KJ_IF_SOME(ex, reason) {
+      kj::throwFatalException(kj::cp(ex));
     }
   }
 
-  bool isCanceled() const { return reason != nullptr; }
+  bool isCanceled() const {
+    return reason != kj::none;
+  }
 
   void addListener(Listener& listener) {
     listeners.add(listener);
@@ -94,7 +101,7 @@ public:
     listeners.remove(listener);
   }
 
-private:
+ private:
   kj::Canceler canceler;
   kj::Maybe<kj::Exception> reason;
 

@@ -3,10 +3,13 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 #include "url.h"
+
 #include "util.h"
+
 #include <kj/encoding.h>
-#include <kj/string-tree.h>
 #include <kj/parse/char.h>
+#include <kj/string-tree.h>
+
 #include <algorithm>
 #include <map>
 #include <set>
@@ -17,40 +20,60 @@ namespace {
 
 // Helper functions for the origin, pathname, and search getters and setters.
 
-bool isSpecialScheme(kj::StringPtr scheme) {
-  // TODO(cleanup): Move this to kj::Url.
-  static std::set<kj::StringPtr> specialSchemes{
-      "ftp", "file", "gopher", "http", "https", "ws", "wss"};
-  return specialSchemes.count(scheme);
+// The folowing two lists needs to be kept in sync since the length and the order
+// of them are needed to properly calculate the hash/index.
+constexpr kj::StringPtr is_special_list[] = {
+  "http"_kj, " "_kj, "https"_kj, "ws"_kj, "ftp"_kj, "wss"_kj, "file"_kj, " "_kj};
+constexpr kj::StringPtr special_ports[] = {
+  "80"_kj, ""_kj, "443"_kj, "80"_kj, "21"_kj, "443"_kj, ""_kj, ""_kj};
+
+// Taken from Ada URL library.
+// Ref: https://github.com/ada-url/ada/blob/b431670699cf4f3ebb2e2c394c23a89850bb6f3f/include/ada/scheme-inl.h#L49
+bool isSpecialScheme(kj::StringPtr scheme) noexcept {
+  if (scheme.size() == 0) {
+    return false;
+  }
+  // Depending on the first character and the size of the input, this line calculates
+  // the index from the list above.
+  //
+  // Generate a simple hash value that will always be between 0 and 7 (inclusive),
+  // regardless of the input. This is because the bitwise AND with 7 ensures that
+  // only the last 3 bits of the result are kept.
+  int hash_value = (2 * scheme.size() + static_cast<unsigned>(scheme[0])) & 7;
+  const auto target = is_special_list[hash_value];
+  return (target[0] == scheme[0]) && (target.slice(1) == scheme.slice(1));
 }
 
-kj::Maybe<kj::StringPtr> defaultPortForScheme(kj::StringPtr scheme) {
-  static std::map<kj::StringPtr, kj::StringPtr> defaultPorts {
-    { "ftp", "21" },
-    { "gopher", "70" },
-    { "http", "80" },
-    { "https", "443" },
-    { "ws", "80" },
-    { "wss", "443" },
-  };
-  auto port = defaultPorts.find(scheme);
-  if (port != defaultPorts.end()) {
-    return port->second;
+// Taken from Ada URL library.
+// Ref: https://github.com/ada-url/ada/blob/b431670699cf4f3ebb2e2c394c23a89850bb6f3f/include/ada/scheme-inl.h#L57
+kj::Maybe<kj::StringPtr> defaultPortForScheme(kj::StringPtr scheme) noexcept {
+  if (scheme.size() == 0) {
+    return kj::none;
   }
-  return nullptr;
+  int hash_value = (2 * scheme.size() + static_cast<unsigned>(scheme[0])) & 7;
+  const auto target = is_special_list[hash_value];
+  if ((target[0] == scheme[0]) && (target.slice(1) == scheme.slice(1))) {
+    auto port = special_ports[hash_value];
+    if (port.size() == 0) {
+      return kj::none;
+    }
+    return port;
+  }
+
+  return kj::none;
 }
 
 void normalizePort(kj::Url& url) {
   // Remove trailing ':', and remove ':xxx' if xxx is the scheme-default port.
 
-  KJ_IF_MAYBE(colon, url.host.findFirst(':')) {
-    if (url.host.size() == *colon + 1) {
+  KJ_IF_SOME(colon, url.host.findFirst(':')) {
+    if (url.host.size() == colon + 1) {
       // Remove trailing ':'.
-      url.host = kj::str(url.host.slice(0, *colon));
-    } else KJ_IF_MAYBE(defaultPort, defaultPortForScheme(url.scheme)) {
-      if (*defaultPort == url.host.slice(*colon + 1)) {
+      url.host = kj::str(url.host.first(colon));
+    } else KJ_IF_SOME(defaultPort, defaultPortForScheme(url.scheme)) {
+      if (defaultPort == url.host.slice(colon + 1)) {
         // Remove scheme-default port.
-        url.host = kj::str(url.host.slice(0, *colon));
+        url.host = kj::str(url.host.first(colon));
       }
     }
   }
@@ -61,12 +84,12 @@ kj::Maybe<kj::ArrayPtr<const char>> trySplit(kj::ArrayPtr<const char>& text, cha
 
   for (auto i: kj::indices(text)) {
     if (text[i] == c) {
-      kj::ArrayPtr<const char> result = text.slice(0, i);
+      kj::ArrayPtr<const char> result = text.first(i);
       text = text.slice(i + 1, text.size());
       return result;
     }
   }
-  return nullptr;
+  return kj::none;
 }
 
 kj::ArrayPtr<const char> split(kj::StringPtr& text, const kj::parse::CharGroup_& chars) {
@@ -74,7 +97,7 @@ kj::ArrayPtr<const char> split(kj::StringPtr& text, const kj::parse::CharGroup_&
 
   for (auto i: kj::indices(text)) {
     if (chars.contains(text[i])) {
-      kj::ArrayPtr<const char> result = text.slice(0, i);
+      kj::ArrayPtr<const char> result = text.first(i);
       text = text.slice(i);
       return result;
     }
@@ -100,11 +123,10 @@ kj::String percentDecodeQuery(kj::ArrayPtr<const char> text, bool& hadErrors) {
   return kj::mv(result);
 }
 
+// Use this instead of calling kj::Url::toString() directly.
 kj::String kjUrlToString(const kj::Url& url) {
-  // Use this instead of calling kj::Url::toString() directly.
-
   kj::String result;
-  KJ_IF_MAYBE(exception, kj::runCatchingExceptions([&]() {
+  KJ_IF_SOME(exception, kj::runCatchingExceptions([&]() {
     result = url.toString();
     // TODO(soon): This stringifier does not append trailing slashes to the pathname conformantly.
     //   For example, this equality currently does not hold true:
@@ -120,18 +142,19 @@ kj::String kjUrlToString(const kj::Url& url) {
     //   with the situation for now. Rather than expose these errors to the user as opaque internal
     //   errors (and nag us via Sentry), we get our hands dirty with some string matching, in the
     //   hopes of helping users work around the bugs.
-    KJ_IF_MAYBE(e, translateKjException(*exception, {
-      { "invalid hostname when stringifying URL"_kj,
-        "Invalid hostname when stringifying URL."_kj },
-      { "invalid name in URL path"_kj,
-        "Invalid pathname when stringifying URL."_kj },
-    })) {
-      kj::throwFatalException(kj::mv(*e));
+    KJ_IF_SOME(e,
+        translateKjException(exception,
+            {
+              {"invalid hostname when stringifying URL"_kj,
+                "Invalid hostname when stringifying URL."_kj},
+              {"invalid name in URL path"_kj, "Invalid pathname when stringifying URL."_kj},
+            })) {
+      kj::throwFatalException(kj::mv(e));
     }
 
     // This is either an error we should know about and expect, or an "internal error". Either way,
     // squawk about it.
-    KJ_LOG(ERROR, *exception);
+    KJ_LOG(ERROR, exception);
     JSG_FAIL_REQUIRE(TypeError, "Error stringifying URL.");
   }
 
@@ -144,14 +167,14 @@ kj::String kjUrlToString(const kj::Url& url) {
 // URL
 
 jsg::Ref<URL> URL::constructor(kj::String url, jsg::Optional<kj::String> base) {
-  KJ_IF_MAYBE(b, base) {
-    auto baseUrl = JSG_REQUIRE_NONNULL(kj::Url::tryParse(kj::mv(*b)),
-        TypeError, "Invalid base URL string.");
-    return jsg::alloc<URL>(JSG_REQUIRE_NONNULL(baseUrl.tryParseRelative(kj::mv(url)),
-        TypeError, "Invalid relative URL string."));
+  KJ_IF_SOME(b, base) {
+    auto baseUrl =
+        JSG_REQUIRE_NONNULL(kj::Url::tryParse(kj::mv(b)), TypeError, "Invalid base URL string.");
+    return jsg::alloc<URL>(JSG_REQUIRE_NONNULL(
+        baseUrl.tryParseRelative(kj::mv(url)), TypeError, "Invalid relative URL string."));
   }
-  return jsg::alloc<URL>(JSG_REQUIRE_NONNULL(kj::Url::tryParse(kj::mv(url)),
-      TypeError, "Invalid URL string."));
+  return jsg::alloc<URL>(
+      JSG_REQUIRE_NONNULL(kj::Url::tryParse(kj::mv(url)), TypeError, "Invalid URL string."));
 }
 
 URL::URL(kj::Url&& u): url(kj::refcounted<RefcountedUrl>(kj::mv(u))) {
@@ -187,12 +210,12 @@ URL::URL(kj::Url&& u): url(kj::refcounted<RefcountedUrl>(kj::mv(u))) {
 kj::String URL::getHref() {
   return toString();
 }
-void URL::setHref(const v8::PropertyCallbackInfo<void>& info, kj::String value) {
-  KJ_IF_MAYBE(u, kj::Url::tryParse(kj::mv(value))) {
-    url->kj::Url::operator=(kj::mv(*u));
+void URL::setHref(jsg::Lock& js, kj::String value) {
+  KJ_IF_SOME(u, kj::Url::tryParse(kj::mv(value))) {
+    url->kj::Url::operator=(kj::mv(u));
   } else {
     auto context = jsg::TypeErrorContext::setterArgument(typeid(URL), "href");
-    jsg::throwTypeError(info.GetIsolate(), context, "valid URL string");
+    jsg::throwTypeError(js.v8Isolate, context, "valid URL string");
     // href's is the only setter which is allowed to throw on invalid input, according to the spec.
   }
 }
@@ -215,63 +238,63 @@ kj::String URL::getProtocol() {
   return kj::str(url->scheme, ':');
 }
 void URL::setProtocol(kj::String value) {
-  KJ_IF_MAYBE(colon, value.findFirst(':')) {
-    value = kj::str(value.slice(0, *colon));
+  KJ_IF_SOME(colon, value.findFirst(':')) {
+    value = kj::str(value.first(colon));
   }
 
   auto copy = url->clone();
   copy.scheme = kj::mv(value);
 
-  KJ_IF_MAYBE(u, kj::Url::tryParse(kjUrlToString(copy))) {
-    url->kj::Url::operator=(kj::mv(*u));
+  KJ_IF_SOME(u, kj::Url::tryParse(kjUrlToString(copy))) {
+    url->kj::Url::operator=(kj::mv(u));
   }
 
   normalizePort(*url);
 }
 
 kj::String URL::getUsername() {
-  KJ_IF_MAYBE(userInfo, url->userInfo) {
-    return kj::encodeUriUserInfo(userInfo->username);
+  KJ_IF_SOME(userInfo, url->userInfo) {
+    return kj::encodeUriUserInfo(userInfo.username);
   }
   return {};
 }
 void URL::setUsername(kj::String value) {
   auto copy = url->clone();
-  KJ_IF_MAYBE(ui, copy.userInfo) {
-    ui->username = kj::mv(value);
+  KJ_IF_SOME(ui, copy.userInfo) {
+    ui.username = kj::mv(value);
   } else {
     copy.userInfo = kj::Url::UserInfo{.username = kj::mv(value)};
   }
 
-  KJ_IF_MAYBE(u, kj::Url::tryParse(kjUrlToString(copy))) {
-    url->kj::Url::operator=(kj::mv(*u));
+  KJ_IF_SOME(u, kj::Url::tryParse(kjUrlToString(copy))) {
+    url->kj::Url::operator=(kj::mv(u));
   }
 }
 
 kj::String URL::getPassword() {
-  KJ_IF_MAYBE(userInfo, url->userInfo) {
-    KJ_IF_MAYBE(password, userInfo->password) {
-      return kj::encodeUriUserInfo(*password);
+  KJ_IF_SOME(userInfo, url->userInfo) {
+    KJ_IF_SOME(password, userInfo.password) {
+      return kj::encodeUriUserInfo(password);
     }
   }
   return {};
 }
 void URL::setPassword(kj::String value) {
   auto copy = url->clone();
-  KJ_IF_MAYBE(ui, copy.userInfo) {
+  KJ_IF_SOME(ui, copy.userInfo) {
     // We already have userInfo. Set the password if we were given a non-empty string, otherwise
     // reset the password Maybe.
     if (value.size() > 0) {
-      ui->password = kj::mv(value);
+      ui.password = kj::mv(value);
     } else {
-      ui->password = nullptr;
+      ui.password = kj::none;
     }
   } else if (value.size() > 0) {
     copy.userInfo = kj::Url::UserInfo{.password = kj::mv(value)};
   }
 
-  KJ_IF_MAYBE(u, kj::Url::tryParse(kjUrlToString(copy))) {
-    url->kj::Url::operator=(kj::mv(*u));
+  KJ_IF_SOME(u, kj::Url::tryParse(kjUrlToString(copy))) {
+    url->kj::Url::operator=(kj::mv(u));
   }
 }
 
@@ -288,17 +311,17 @@ void URL::setHost(kj::String value) {
   // If the new host value lacks a port, copy the current one over to the new value, if any. We can
   // assume that if the current one has a port, it must not be the default port for this URL's
   // scheme.
-  KJ_IF_MAYBE(colon, url->host.findFirst(':')) {
-    KJ_IF_MAYBE(newHostColon, value.findFirst(':')) {
-      if (value.size() == *newHostColon + 1) {
+  KJ_IF_SOME(colon, url->host.findFirst(':')) {
+    KJ_IF_SOME(newHostColon, value.findFirst(':')) {
+      if (value.size() == newHostColon + 1) {
         // The new host has a colon but nothing after it. Adopt the current port.
-        value = kj::str(kj::mv(value), url->host.slice(*colon + 1));
+        value = kj::str(kj::mv(value), url->host.slice(colon + 1));
       } else {
         // The new host has a port, so we don't copy the current one over.
       }
     } else {
       // The new host has no port. Adopt the current port.
-      value = kj::str(kj::mv(value), url->host.slice(*colon));
+      value = kj::str(kj::mv(value), url->host.slice(colon));
     }
   }
 
@@ -309,30 +332,30 @@ void URL::setHost(kj::String value) {
 }
 
 kj::String URL::getHostname() {
-  KJ_IF_MAYBE(colon, url->host.findFirst(':')) {
-    return kj::str(url->host.slice(0, *colon));
+  KJ_IF_SOME(colon, url->host.findFirst(':')) {
+    return kj::str(url->host.first(colon));
   }
   return kj::str(url->host);
 }
 void URL::setHostname(kj::String value) {
   // In contrast to the host setter, the hostname setter explicitly ignores any new port. We take
   // the hostname from the new value and the port from the old value.
-  auto hostnameString = value.slice(0, value.findFirst(':').orDefault(value.size()));
+  auto hostnameString = value.first(value.findFirst(':').orDefault(value.size()));
   auto portString = url->host.slice(url->host.findFirst(':').orDefault(url->host.size()));
 
   url->host = kj::str(hostnameString, portString);
 }
 
 kj::String URL::getPort() {
-  KJ_IF_MAYBE(colon, url->host.findFirst(':')) {
-    return kj::str(url->host.slice(*colon + 1));
+  KJ_IF_SOME(colon, url->host.findFirst(':')) {
+    return kj::str(url->host.slice(colon + 1));
   }
   return {};
 }
 void URL::setPort(kj::String value) {
-  KJ_IF_MAYBE(colon, url->host.findFirst(':')) {
+  KJ_IF_SOME(colon, url->host.findFirst(':')) {
     // Our url's host already has a port. Replace it.
-    value = kj::str(url->host.slice(0, *colon + 1), kj::mv(value));
+    value = kj::str(url->host.first(colon + 1), kj::mv(value));
   } else {
     value = kj::str(url->host, ':', kj::mv(value));
   }
@@ -344,9 +367,8 @@ void URL::setPort(kj::String value) {
 
 kj::String URL::getPathname() {
   if (url->path.size() > 0) {
-    auto components = KJ_MAP(component, url->path) {
-      return kj::str('/', kj::encodeUriPath(component));
-    };
+    auto components =
+        KJ_MAP(component, url->path) { return kj::str('/', kj::encodeUriPath(component)); };
     return kj::str(kj::strArray(components, ""), url->hasTrailingSlash ? "/" : "");
   } else if (url->hasTrailingSlash || isSpecialScheme(url->scheme)) {
     // Special URLs have non-empty paths by definition, regardless of the value of hasTrailingSlash.
@@ -433,11 +455,11 @@ void URL::setSearch(kj::String value) {
       //   also applies to URL's constructor as well.
       //
       //   See step 1.3.1 of https://url.spec.whatwg.org/#query-state
-      KJ_IF_MAYBE(key, trySplit(part, '=')) {
-        newQuery.add(kj::Url::QueryParam { percentDecodeQuery(*key, err),
-                                           percentDecodeQuery(part, err) });
+      KJ_IF_SOME(key, trySplit(part, '=')) {
+        newQuery.add(
+            kj::Url::QueryParam{percentDecodeQuery(key, err), percentDecodeQuery(part, err)});
       } else {
-        newQuery.add(kj::Url::QueryParam { percentDecodeQuery(part, err), nullptr });
+        newQuery.add(kj::Url::QueryParam{percentDecodeQuery(part, err), nullptr});
       }
     }
 
@@ -451,8 +473,8 @@ void URL::setSearch(kj::String value) {
 }
 
 jsg::Ref<URLSearchParams> URL::getSearchParams() {
-  KJ_IF_MAYBE(usp, searchParams) {
-    return usp->addRef();
+  KJ_IF_SOME(usp, searchParams) {
+    return usp.addRef();
   } else {
     searchParams.emplace(jsg::alloc<URLSearchParams>(kj::addRef(*url)));
     return KJ_ASSERT_NONNULL(searchParams).addRef();
@@ -460,9 +482,9 @@ jsg::Ref<URLSearchParams> URL::getSearchParams() {
 }
 
 kj::String URL::getHash() {
-  KJ_IF_MAYBE(fragment, url->fragment) {
-    if (fragment->size() > 0) {
-      return kj::str('#', kj::encodeUriFragment(*fragment));
+  KJ_IF_SOME(fragment, url->fragment) {
+    if (fragment.size() > 0) {
+      return kj::str('#', kj::encodeUriFragment(fragment));
     }
   }
   return {};
@@ -488,8 +510,8 @@ jsg::Ref<URLSearchParams> URLSearchParams::constructor(
     jsg::Optional<URLSearchParams::Initializer> init) {
   auto searchParams = jsg::alloc<URLSearchParams>(kj::refcounted<URL::RefcountedUrl>());
 
-  KJ_IF_MAYBE(i, init) {
-    KJ_SWITCH_ONEOF(*i) {
+  KJ_IF_SOME(i, init) {
+    KJ_SWITCH_ONEOF(i) {
       KJ_CASE_ONEOF(usp, jsg::Ref<URLSearchParams>) {
         searchParams->url->kj::Url::operator=(usp->url->clone());
       }
@@ -498,14 +520,15 @@ jsg::Ref<URLSearchParams> URLSearchParams::constructor(
       }
       KJ_CASE_ONEOF(dict, jsg::Dict<kj::String>) {
         searchParams->url->query = KJ_MAP(entry, dict.fields) {
-          return kj::Url::QueryParam { kj::mv(entry.name), kj::mv(entry.value) };
+          return kj::Url::QueryParam{kj::mv(entry.name), kj::mv(entry.value)};
         };
       }
       KJ_CASE_ONEOF(arrayOfArrays, kj::Array<kj::Array<kj::String>>) {
         searchParams->url->query = KJ_MAP(entry, arrayOfArrays) {
-          JSG_REQUIRE(entry.size() == 2, TypeError, "To initialize a URLSearchParams object "
+          JSG_REQUIRE(entry.size() == 2, TypeError,
+              "To initialize a URLSearchParams object "
               "from an array-of-arrays, each inner array must have exactly two elements.");
-          return kj::Url::QueryParam { kj::mv(entry[0]), kj::mv(entry[1]) };
+          return kj::Url::QueryParam{kj::mv(entry[0]), kj::mv(entry[1])};
         };
       }
     }
@@ -515,12 +538,12 @@ jsg::Ref<URLSearchParams> URLSearchParams::constructor(
 }
 
 void URLSearchParams::append(kj::String name, kj::String value) {
-  url->query.add(kj::Url::QueryParam { kj::mv(name), kj::mv(value) });
+  url->query.add(kj::Url::QueryParam{kj::mv(name), kj::mv(value)});
 }
 
 void URLSearchParams::delete_(kj::String name) {
-  auto pivot = std::remove_if(url->query.begin(), url->query.end(),
-                              [&name](const auto& kv) { return kv.name == name; });
+  auto pivot = std::remove_if(
+      url->query.begin(), url->query.end(), [&name](const auto& kv) { return kv.name == name; });
   url->query.truncate(pivot - url->query.begin());
 }
 
@@ -530,7 +553,7 @@ kj::Maybe<kj::String> URLSearchParams::get(kj::String name) {
       return kj::str(v);
     }
   }
-  return nullptr;
+  return kj::none;
 }
 
 kj::Array<kj::String> URLSearchParams::getAll(kj::String name) {
@@ -552,8 +575,8 @@ bool URLSearchParams::has(kj::String name) {
   return false;
 }
 
+// Set the first element named `name` to `value`, then remove all the rest matching that name.
 void URLSearchParams::set(kj::String name, kj::String value) {
-  // Set the first element named `name` to `value`, then remove all the rest matching that name.
   const auto predicate = [name = name.slice(0)](const auto& kv) { return kv.name == name; };
   auto firstFound = std::find_if(url->query.begin(), url->query.end(), predicate);
   if (firstFound != url->query.end()) {
@@ -565,9 +588,8 @@ void URLSearchParams::set(kj::String name, kj::String value) {
   }
 }
 
+// Sort by UTF-16 code unit, preserving order of equal elements.
 void URLSearchParams::sort() {
-  // Sort by UTF-16 code unit, preserving order of equal elements.
-  //
   // TODO(perf): This UTF-16 business is sad. The WPT points out the specific example 🌈 < ﬃ,
   //   because the rainbow is lexicographically less than the ligature in UTF-16 code units. In
   //   UTF-8 code units, their order is the opposite.
@@ -576,51 +598,47 @@ void URLSearchParams::sort() {
   //   ﬃ   ef ac 83    |  fb03
   //   🌈  f0 9f 8c 88 |  d83c df08
 
-  std::stable_sort(url->query.begin(), url->query.end(),
-      [](const auto& left, const auto& right) {
-        auto leftUtf16 = kj::encodeUtf16(left.name.asArray());
-        auto rightUtf16 = kj::encodeUtf16(right.name.asArray());
-        return std::lexicographical_compare(leftUtf16.begin(), leftUtf16.end(),
-                                            rightUtf16.begin(), rightUtf16.end());
-      });
+  std::stable_sort(url->query.begin(), url->query.end(), [](const auto& left, const auto& right) {
+    auto leftUtf16 = fastEncodeUtf16(left.name.asArray());
+    auto rightUtf16 = fastEncodeUtf16(right.name.asArray());
+    return std::lexicographical_compare(
+        leftUtf16.begin(), leftUtf16.end(), rightUtf16.begin(), rightUtf16.end());
+  });
 }
 
-void URLSearchParams::forEach(
-    jsg::V8Ref<v8::Function> callback,
-    jsg::Optional<jsg::Value> thisArg,
-    v8::Isolate* isolate) {
-  auto localCallback = callback.getHandle(isolate);
-  auto localThisArg = thisArg.map([&](jsg::Value& v) { return v.getHandle(isolate); })
-      .orDefault(v8::Undefined(isolate));
-  // JSG_THIS.getHandle() is guaranteed safe because `forEach()` is only called
-  // from JavaScript, which means a Headers JS wrapper object must already exist.
-  auto localParams = KJ_ASSERT_NONNULL(JSG_THIS.tryGetHandle(isolate));
+void URLSearchParams::forEach(jsg::Lock& js,
+    jsg::Function<void(kj::StringPtr, kj::StringPtr, jsg::Ref<URLSearchParams>)> callback,
+    jsg::Optional<jsg::Value> thisArg) {
+  auto receiver = js.v8Undefined();
+  KJ_IF_SOME(arg, thisArg) {
+    auto handle = arg.getHandle(js);
+    if (!handle->IsNullOrUndefined()) {
+      receiver = handle;
+    }
+  }
+  callback.setReceiver(js.v8Ref(receiver));
 
-  auto context = isolate->GetCurrentContext();  // Needed later for Call().
-  for (int i = 0; i < this->url->query.size(); i++) {
+  // On each iteration of the for loop, a JavaScript callback is invoked. If a new
+  // item is appended to the this->url->query within that function, the loop must pick
+  // it up. Using the classic for (;;) syntax here allows for that. However, this does
+  // mean that it's possible for a user to trigger an infinite loop here if new items
+  // are added to the search params unconditionally on each iteration.
+  for (size_t i = 0; i < this->url->query.size(); i++) {
     auto& [key, value] = this->url->query[i];
-    static constexpr auto ARG_COUNT = 3;
-    v8::Local<v8::Value> args[ARG_COUNT] = {
-      jsg::v8Str(isolate, value),
-      jsg::v8Str(isolate, key),
-      localParams,
-    };
-    // Call jsg::check() to propagate exceptions, but we don't expect any
-    // particular return value.
-    jsg::check(localCallback->Call(context, localThisArg, ARG_COUNT, args));
+    callback(js, value, key, JSG_THIS);
   }
 }
 
 jsg::Ref<URLSearchParams::EntryIterator> URLSearchParams::entries(jsg::Lock&) {
-  return jsg::alloc<EntryIterator>(IteratorState { JSG_THIS });
+  return jsg::alloc<EntryIterator>(IteratorState{JSG_THIS});
 }
 
 jsg::Ref<URLSearchParams::KeyIterator> URLSearchParams::keys(jsg::Lock&) {
-  return jsg::alloc<KeyIterator>(IteratorState { JSG_THIS });
+  return jsg::alloc<KeyIterator>(IteratorState{JSG_THIS});
 }
 
 jsg::Ref<URLSearchParams::ValueIterator> URLSearchParams::values(jsg::Lock&) {
-  return jsg::alloc<ValueIterator>(IteratorState { JSG_THIS });
+  return jsg::alloc<ValueIterator>(IteratorState{JSG_THIS});
 }
 
 kj::String URLSearchParams::toString() {

@@ -1,7 +1,7 @@
-From 9552b08768d3325b8c755cc082500ba2990a1282 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Alex Robinson <arobinson@cloudflare.com>
 Date: Wed, 2 Mar 2022 15:58:04 -0600
-Subject: [PATCH 1/5] Allow manually setting ValueDeserializer format version
+Subject: Allow manually setting ValueDeserializer format version
 
 For many years, V8's serialization version didn't change. In the meantime,
 we accidentally stored data that was missing a version header. This patch
@@ -15,17 +15,12 @@ like:
     deserializer.SetWireFormatVersion(13);
   }
   auto maybeValue = deserializer.ReadValue(isolate->GetCurrentContext());
----
- include/v8-value-serializer.h  | 7 +++++++
- src/api/api.cc                 | 4 ++++
- src/objects/value-serializer.h | 7 +++++++
- 3 files changed, 18 insertions(+)
 
 diff --git a/include/v8-value-serializer.h b/include/v8-value-serializer.h
-index 729730c608..4398684017 100644
+index 0cb3e045bc46ec732956318b980e749d1847d06d..40ad805c7970cc9379e69f046205836dbd760373 100644
 --- a/include/v8-value-serializer.h
 +++ b/include/v8-value-serializer.h
-@@ -279,6 +279,13 @@ class V8_EXPORT ValueDeserializer {
+@@ -293,6 +293,13 @@ class V8_EXPORT ValueDeserializer {
     */
    uint32_t GetWireFormatVersion() const;
  
@@ -40,10 +35,10 @@ index 729730c608..4398684017 100644
     * Reads raw data in various common formats to the buffer.
     * Note that integer types are read in base-128 varint format, not with a
 diff --git a/src/api/api.cc b/src/api/api.cc
-index 14b7c541b3..4a71629579 100644
+index c0ff2001df718c89bd1fdf06e95d51e56aa23f03..c9d69132f41457d6eb1f2996dea30fdbba8143f9 100644
 --- a/src/api/api.cc
 +++ b/src/api/api.cc
-@@ -3578,6 +3578,10 @@ uint32_t ValueDeserializer::GetWireFormatVersion() const {
+@@ -3646,6 +3646,10 @@ uint32_t ValueDeserializer::GetWireFormatVersion() const {
    return private_->deserializer.GetWireFormatVersion();
  }
  
@@ -52,13 +47,13 @@ index 14b7c541b3..4a71629579 100644
 +}
 +
  MaybeLocal<Value> ValueDeserializer::ReadValue(Local<Context> context) {
-   PREPARE_FOR_EXECUTION(context, ValueDeserializer, ReadValue, Value);
-   i::MaybeHandle<i::Object> result;
+   PREPARE_FOR_EXECUTION(context, ValueDeserializer, ReadValue);
+   i::MaybeDirectHandle<i::Object> result;
 diff --git a/src/objects/value-serializer.h b/src/objects/value-serializer.h
-index 1c7e7bb76f..95950427c3 100644
+index 3e76d677a1753eef605b87a203fcbde0b788bc49..c58a695378ea692d9cebef4b04ea86202baba49d 100644
 --- a/src/objects/value-serializer.h
 +++ b/src/objects/value-serializer.h
-@@ -216,6 +216,13 @@ class ValueDeserializer {
+@@ -220,6 +220,13 @@ class ValueDeserializer {
     */
    uint32_t GetWireFormatVersion() const { return version_; }
  
@@ -72,6 +67,3 @@ index 1c7e7bb76f..95950427c3 100644
    /*
     * Deserializes a V8 object from the buffer.
     */
--- 
-2.30.2
-

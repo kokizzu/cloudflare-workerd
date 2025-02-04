@@ -1,3 +1,7 @@
+// Copyright (c) 2022-2023 Cloudflare, Inc.
+// Licensed under the Apache 2.0 license found in the LICENSE file or at:
+//     https://opensource.org/licenses/Apache-2.0
+
 import assert from "assert";
 import { test } from "node:test";
 import {
@@ -126,16 +130,20 @@ test("createTypeNode: array types", () => {
   array.setName("kj::Array");
   array.initElement().initNumber().setName("int");
   assert.strictEqual(printNode(createTypeNode(type)), "number[]");
+  // If element is a char, then this is a string
+  array.setName("kj::ArrayPtr");
+  array.initElement().initNumber().setName("char");
+  assert.strictEqual(printNode(createTypeNode(type)), "string");
   // If element is a byte, then this is an ArrayBuffer, ArrayBufferView or both
   array.setName("kj::Array");
-  array.initElement().initNumber().setName("char");
+  array.initElement().initNumber().setName("unsigned char");
   assert.strictEqual(printNode(createTypeNode(type)), "ArrayBuffer");
   assert.strictEqual(
     printNode(createTypeNode(type, true)),
     "ArrayBuffer | ArrayBufferView"
   );
   array.setName("kj::ArrayPtr");
-  array.initElement().initNumber().setName("char");
+  array.initElement().initNumber().setName("unsigned char");
   assert.strictEqual(printNode(createTypeNode(type)), "ArrayBufferView");
   assert.strictEqual(
     printNode(createTypeNode(type, true)),
@@ -185,10 +193,18 @@ test("createTypeNode: implementation types", () => {
     (member) => typeof member === "number"
   );
   for (const implType of implTypes) {
-    // VARARGS is the only type we care about which will be tested with function
-    // types, the rest should be ignored
-    if (implType === JsgImplType_Type.JSG_VARARGS) continue;
+    // VARARGS and NAME are the only types we care about which will be tested
+    // with function types, the rest should be ignored
+    if (
+      implType === JsgImplType_Type.JSG_VARARGS ||
+      implType === JsgImplType_Type.JSG_NAME
+    ) {
+      continue;
+    }
     impl.setType(implType);
     assert.strictEqual(printNode(createTypeNode(type)), "never");
   }
+
+  impl.setType(JsgImplType_Type.JSG_NAME);
+  assert.strictEqual(printNode(createTypeNode(type)), "PropertyKey");
 });

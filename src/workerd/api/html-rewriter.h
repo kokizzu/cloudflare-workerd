@@ -4,9 +4,10 @@
 
 #pragma once
 
+#include <workerd/api/http.h>
 #include <workerd/jsg/jsg.h>
+
 #include <v8.h>
-#include "http.h"
 
 struct lol_html_HtmlRewriterBuilder;
 struct lol_html_HtmlRewriter;
@@ -19,6 +20,8 @@ struct lol_html_EndTag;
 struct lol_html_AttributesIterator;
 struct lol_html_Attribute;
 // Defined in lol_html.h, forward declarations mirrored here so we don't need the header.
+
+KJ_DECLARE_NON_POLYMORPHIC(lol_html_AttributesIterator);
 
 namespace workerd::api {
 
@@ -33,7 +36,7 @@ class DocumentEnd;
 // HTMLRewriter
 
 class HTMLRewriter: public jsg::Object {
-public:
+ public:
   class Token;
   class TokenScope;
 
@@ -46,12 +49,11 @@ public:
   using ElementCallback = kj::Promise<void>(jsg::Ref<jsg::Object> element);
   using ElementCallbackFunction = jsg::Function<ElementCallback>;
 
+  // A struct-like wrapper around element content handlers. I say struct-like, because we only use
+  // this wrapper as a convenience to help us access the three function properties that we expect
+  // to find. In reality, this is more like a "callback interface" in Web IDL terms, since we hang
+  // onto the original object so that we can use it as the `this` argument.
   struct ElementContentHandlers {
-    // A struct-like wrapper around element content handlers. I say struct-like, because we only use
-    // this wrapper as a convenience to help us access the three function properties that we expect
-    // to find. In reality, this is more like a "callback interface" in Web IDL terms, since we hang
-    // onto the original object so that we can use it as the `this` argument.
-
     jsg::Optional<ElementCallbackFunction> element;
     jsg::Optional<ElementCallbackFunction> comments;
     jsg::Optional<ElementCallbackFunction> text;
@@ -66,10 +68,9 @@ public:
     // Specify parameter types for callback functions
   };
 
+  // A struct-like wrapper around document content handlers. See the doc comment on
+  // ElementContentHandlers for more information on its idiosyncrasies.
   struct DocumentContentHandlers {
-    // A struct-like wrapper around document content handlers. See the doc comment on
-    // ElementContentHandlers for more information on its idiosyncrasies.
-
     jsg::Optional<ElementCallbackFunction> doctype;
     jsg::Optional<ElementCallbackFunction> comments;
     jsg::Optional<ElementCallbackFunction> text;
@@ -93,8 +94,6 @@ public:
   // ElementContentHandlers or DocumentContentHandlers struct, respectively. We take it as a
   // v8::Object so that we can use it as the `this` argument for the function calls.
 
-  jsg::Ref<Response> transform(jsg::Lock& js, jsg::Ref<Response> response,
-      CompatibilityFlags::Reader featureFlags);
   // Create a new Response object that is identical to the input response except that its body is
   // the result of running the original body through this HTMLRewriter's rewriter. This
   // function does not run the parser itself -- to drive the parser, you must read the transformed
@@ -102,6 +101,7 @@ public:
   //
   // Pre-condition: the input response body is not disturbed.
   // Post-condition: the input response body is disturbed.
+  jsg::Ref<Response> transform(jsg::Lock& js, jsg::Ref<Response> response);
 
   JSG_RESOURCE_TYPE(HTMLRewriter) {
     JSG_METHOD(on);
@@ -109,12 +109,29 @@ public:
     JSG_METHOD(transform);
   }
 
-private:
+  void visitForMemoryInfo(jsg::MemoryTracker& tracker) const;
+
+ private:
   void visitForGc(jsg::GcVisitor& visitor);
 
   struct Impl;
   kj::Own<Impl> impl;
 };
+
+// A chunk of text or HTML which can be passed to content token mutation functions.
+using Content = kj::OneOf<kj::String, jsg::Ref<ReadableStream>, jsg::Ref<Response>>;
+// TODO(soon): Support ReadableStream/Response types. Requires fibers or lol-html saveable state.
+
+// Options bag which can be passed to content token mutation functions.
+struct ContentOptions {
+  // True if the Content being passed to the mutation function is HTML. If false, the content will
+  // be escaped (HTML entity-encoded).
+  jsg::Optional<bool> html;
+
+  JSG_STRUCT(html);
+};
+
+class Rewriter;
 
 // =======================================================================================
 // HTML Content Tokens
@@ -136,29 +153,29 @@ private:
 // collecting definitions.
 
 class HTMLRewriter::Token: public jsg::Object {
-public:
+ public:
   virtual void htmlContentScopeEnd() = 0;
+
+  // Each Token subclass has an inner ImplBase subclass which holds a reference
+  // to the rewriter, and the actual underlying lol-html C API handle for the token.
+  template <typename CType>
+  struct ImplBase {
+    ImplBase(CType& element, Rewriter& rewriter);
+    KJ_DISALLOW_COPY_AND_MOVE(ImplBase);
+    ~ImplBase() noexcept(false);
+
+    // Dispatches calls to the underlying lol_html methods for each event (e.g. before, after, replace).
+    // Handles replacements of each supported type (string, ReadableStream, Body).
+    template <auto Func, auto StreamingFunc>
+    void rewriteContentGeneric(Content content, jsg::Optional<ContentOptions> options);
+
+    CType& element;
+    Rewriter& rewriter;
+  };
 };
-
-using Content = kj::OneOf<kj::String, jsg::Ref<ReadableStream>, jsg::Ref<Response>>;
-// A chunk of text or HTML which can be passed to content token mutation functions.
-//
-// TODO(soon): Support ReadableStream/Response types. Requires fibers or lol-html saveable state.
-
-struct ContentOptions {
-  // Options bag which can be passed to content token mutation functions.
-
-  jsg::Optional<bool> html;
-  // True if the Content being passed to the mutation function is HTML. If false, the content will
-  // be escaped (HTML entity-encoded).
-
-  JSG_STRUCT(html);
-};
-
-class Rewriter;
 
 class Element final: public HTMLRewriter::Token {
-public:
+ public:
   using CType = lol_html_Element;
 
   explicit Element(CType& element, Rewriter& wrapper);
@@ -214,28 +231,16 @@ public:
 
     JSG_TS_ROOT();
     JSG_TS_OVERRIDE({
-      before(content: string, options?: ContentOptions): Element;
-      after(content: string, options?: ContentOptions): Element;
-      prepend(content: string, options?: ContentOptions): Element;
-      append(content: string, options?: ContentOptions): Element;
-      replace(content: string, options?: ContentOptions): Element;
-      setInnerContent(content: string, options?: ContentOptions): Element;
-
-      onEndTag(handler: (tag: EndTag) => void | Promise<void>): void;
+         onEndTag(handler: (tag: EndTag) => void | Promise<void>): void;
     });
-    // Require content to be a string, and specify parameter type for onEndTag
-    // callback function
+    // Specify parameter type for onEndTag callback function
   }
 
-private:
-  struct Impl {
-    Impl(CType& element, Rewriter&);
-    KJ_DISALLOW_COPY_AND_MOVE(Impl);
+ private:
+  struct Impl: public HTMLRewriter::Token::ImplBase<CType> {
+    using HTMLRewriter::Token::ImplBase<CType>::ImplBase;
     ~Impl() noexcept(false);
-
-    CType& element;
     kj::Vector<jsg::Ref<AttributesIterator>> attributesIterators;
-    Rewriter& rewriter;
   };
 
   kj::Maybe<Impl> impl;
@@ -244,12 +249,12 @@ private:
 };
 
 class Element::AttributesIterator final: public HTMLRewriter::Token {
-public:
+ public:
   using CType = lol_html_AttributesIterator;
 
-  explicit AttributesIterator(kj::Own<CType> iter);
   // lol_html_AttributesIterator has the distinction of being valid only during a content handler
   // execution scope AND also requiring manual deallocation, so this takes an Own<T> rather than T&.
+  explicit AttributesIterator(kj::Own<CType> iter);
 
   struct Next {
     bool done;
@@ -268,17 +273,17 @@ public:
     JSG_ITERABLE(self);
   }
 
-private:
+ private:
   kj::Maybe<kj::Own<CType>> impl;
 
   void htmlContentScopeEnd() override;
 };
 
 class EndTag final: public HTMLRewriter::Token {
-public:
+ public:
   using CType = lol_html_EndTag;
 
-  explicit EndTag(CType& tag, Rewriter&);
+  explicit EndTag(CType& tag, Rewriter& rewriter);
 
   kj::String getName();
   void setName(kj::String);
@@ -295,21 +300,16 @@ public:
     JSG_METHOD(remove);
 
     JSG_TS_ROOT();
-    JSG_TS_OVERRIDE({
-      before(content: string, options?: ContentOptions): EndTag;
-      after(content: string, options?: ContentOptions): EndTag;
-    });
-    // Require content to be a string
   }
 
-private:
-  kj::Maybe<CType&> impl;
+ private:
+  kj::Maybe<HTMLRewriter::Token::ImplBase<CType>> impl;
 
   void htmlContentScopeEnd() override;
 };
 
 class Comment final: public HTMLRewriter::Token {
-public:
+ public:
   using CType = lol_html_Comment;
 
   explicit Comment(CType& comment, Rewriter&);
@@ -342,17 +342,17 @@ public:
     // Require content to be a string
   }
 
-private:
+ private:
   kj::Maybe<CType&> impl;
 
   void htmlContentScopeEnd() override;
 };
 
 class Text final: public HTMLRewriter::Token {
-public:
+ public:
   using CType = lol_html_TextChunk;
 
-  explicit Text(CType& text, Rewriter&);
+  explicit Text(CType& text, Rewriter& rewriter);
 
   kj::String getText();
 
@@ -376,22 +376,16 @@ public:
     JSG_METHOD(remove);
 
     JSG_TS_ROOT();
-    JSG_TS_OVERRIDE({
-      before(content: string, options?: ContentOptions): Text;
-      after(content: string, options?: ContentOptions): Text;
-      replace(content: string, options?: ContentOptions): Text;
-    });
-    // Require content to be a string
   }
 
-private:
-  kj::Maybe<CType&> impl;
+ private:
+  kj::Maybe<HTMLRewriter::Token::ImplBase<CType>> impl;
 
   void htmlContentScopeEnd() override;
 };
 
 class Doctype final: public HTMLRewriter::Token {
-public:
+ public:
   using CType = lol_html_Doctype;
 
   explicit Doctype(CType& doctype, Rewriter&);
@@ -408,14 +402,14 @@ public:
     JSG_TS_ROOT();
   }
 
-private:
+ private:
   kj::Maybe<CType&> impl;
 
   void htmlContentScopeEnd() override;
 };
 
 class DocumentEnd final: public HTMLRewriter::Token {
-public:
+ public:
   using CType = lol_html_DocumentEnd;
 
   explicit DocumentEnd(CType& documentEnd, Rewriter&);
@@ -432,24 +426,16 @@ public:
     // Require content to be a string
   }
 
-private:
+ private:
   kj::Maybe<CType&> impl;
 
   void htmlContentScopeEnd() override;
 };
 
-#define EW_HTML_REWRITER_ISOLATE_TYPES          \
-  api::ContentOptions,                          \
-  api::HTMLRewriter,                            \
-  api::HTMLRewriter::ElementContentHandlers,    \
-  api::HTMLRewriter::DocumentContentHandlers,   \
-  api::Doctype,                                 \
-  api::Element,                                 \
-  api::EndTag,                                  \
-  api::Comment,                                 \
-  api::Text,                                    \
-  api::DocumentEnd,                             \
-  api::Element::AttributesIterator,             \
-  api::Element::AttributesIterator::Next
+#define EW_HTML_REWRITER_ISOLATE_TYPES                                                             \
+  api::ContentOptions, api::HTMLRewriter, api::HTMLRewriter::ElementContentHandlers,               \
+      api::HTMLRewriter::DocumentContentHandlers, api::Doctype, api::Element, api::EndTag,         \
+      api::Comment, api::Text, api::DocumentEnd, api::Element::AttributesIterator,                 \
+      api::Element::AttributesIterator::Next
 
 }  // namespace workerd::api

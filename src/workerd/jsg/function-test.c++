@@ -8,8 +8,9 @@ namespace workerd::jsg::test {
 namespace {
 
 V8System v8System;
+class ContextGlobalObject: public Object, public ContextGlobal {};
 
-struct CallbackContext: public Object {
+struct CallbackContext: public ContextGlobalObject {
   kj::String callCallback(Lock& js, jsg::Function<kj::String(kj::StringPtr, double)> function) {
     return kj::str(function(js, "foo", 123), ", abc");
   }
@@ -44,51 +45,49 @@ JSG_DECLARE_ISOLATE_TYPE(CallbackIsolate, CallbackContext, CallbackContext::Frob
 
 KJ_TEST("callbacks") {
   Evaluator<CallbackContext, CallbackIsolate> e(v8System);
-  e.expectEval(
-      "callCallback((str, num) => {\n"
-      "  return [typeof str, str, typeof num, num.toString(), 'bar'].join(', ');\n"
-      "})", "string", "string, foo, number, 123, bar, abc");
+  e.expectEval("callCallback((str, num) => {\n"
+               "  return [typeof str, str, typeof num, num.toString(), 'bar'].join(', ');\n"
+               "})",
+      "string", "string, foo, number, 123, bar, abc");
 
-  e.expectEval(
-      "callCallback((str, num) => {\n"
-      "  throw new Error('error message')\n"
-      "})", "throws", "Error: error message");
+  e.expectEval("callCallback((str, num) => {\n"
+               "  throw new Error('error message')\n"
+               "})",
+      "throws", "Error: error message");
 
-  e.expectEval(
-      "callCallbackReturningBox(() => {\n"
-      "  return new NumberBox(123);\n"
-      "})", "number", "123");
-  e.expectEval(
-      "callCallbackReturningBox(() => {\n"
-      "  return 'foo';\n"
-      "})", "throws", "TypeError: Callback returned incorrect type; expected 'NumberBox'");
+  e.expectEval("callCallbackReturningBox(() => {\n"
+               "  return new NumberBox(123);\n"
+               "})",
+      "number", "123");
+  e.expectEval("callCallbackReturningBox(() => {\n"
+               "  return 'foo';\n"
+               "})",
+      "throws", "TypeError: Callback returned incorrect type; expected 'NumberBox'");
 
-  e.expectEval(
-      "class Frobber {\n"
-      "  constructor(s, n) {\n"
-      "    this.s = s;\n"
-      "    this.n = n;\n"
-      "  }\n"
-      "  frob(m) {\n"
-      "    return this.s + (m + this.n);\n"
-      "  }\n"
-      "  optionalFrob(m) {\n"
-      "    return 'opn' + this.s + (m + this.n);\n"
-      "  }\n"
-      "  maybeFrob(m) {\n"
-      "    return 'mby' + this.s + (m + this.n);\n"
-      "  }\n"
-      "}\n"
-      "callConstructor(Frobber)", "string", "foo123foo444opnfoo777mbyfoo1110");
+  e.expectEval("class Frobber {\n"
+               "  constructor(s, n) {\n"
+               "    this.s = s;\n"
+               "    this.n = n;\n"
+               "  }\n"
+               "  frob(m) {\n"
+               "    return this.s + (m + this.n);\n"
+               "  }\n"
+               "  optionalFrob(m) {\n"
+               "    return 'opn' + this.s + (m + this.n);\n"
+               "  }\n"
+               "  maybeFrob(m) {\n"
+               "    return 'mby' + this.s + (m + this.n);\n"
+               "  }\n"
+               "}\n"
+               "callConstructor(Frobber)",
+      "string", "foo123foo444opnfoo777mbyfoo1110");
 }
 
 // ========================================================================================
 
-struct WrapContext: public Object {
+struct WrapContext: public ContextGlobalObject {
   auto returnFunction(double value) {
-    return [value](Lock&, double value2) {
-      return value + value2;
-    };
+    return [value](Lock&, double value2) { return value + value2; };
   }
   auto returnFunctionWithInfo(double value) {
     return [value](Lock&, const v8::FunctionCallbackInfo<v8::Value>& info, double value2) {
@@ -97,9 +96,7 @@ struct WrapContext: public Object {
     };
   }
   auto returnFunctionMutable(double value) {
-    return [value](Lock&, double value2) mutable {
-      return value + value2;
-    };
+    return [value](Lock&, double value2) mutable { return value + value2; };
   }
   auto returnFunctionWithInfoMutable(double value) {
     return [value](Lock&, const v8::FunctionCallbackInfo<v8::Value>& info, double value2) mutable {
@@ -108,9 +105,7 @@ struct WrapContext: public Object {
     };
   }
   auto returnFunctionReturningVoid(double value) {
-    return [value](Lock&, NumberBox& box) -> void {
-      box.value = value;
-    };
+    return [value](Lock&, NumberBox& box) -> void { box.value = value; };
   }
 
   JSG_RESOURCE_TYPE(WrapContext) {
@@ -132,16 +127,15 @@ KJ_TEST("wrap functions") {
   e.expectEval("returnFunctionMutable(123)(321)", "number", "444");
   e.expectEval("returnFunctionWithInfoMutable(123)(321, '', undefined)", "number", "447");
 
-  e.expectEval(
-      "var nb = new NumberBox(321);\n"
-      "var ret = returnFunctionReturningVoid(123)(nb);\n"
-      "ret === undefined ? nb.value : 555",
+  e.expectEval("var nb = new NumberBox(321);\n"
+               "var ret = returnFunctionReturningVoid(123)(nb);\n"
+               "ret === undefined ? nb.value : 555",
       "number", "123");
 }
 
 // ========================================================================================
 
-struct FunctionContext: public Object {
+struct FunctionContext: public ContextGlobalObject {
   auto test(Lock& js, Function<bool(int)> fn) {
     return fn(js, 1);
   }
@@ -172,17 +166,15 @@ struct FunctionContext: public Object {
   };
 
   jsg::Function<int(int)> getGcLambda() {
-    return JSG_VISITABLE_LAMBDA(
-          (v1 = VisitDetector(), v2 = VisitDetector(), v3 = VisitDetector()),
-          (v1, v3),
-          (Lock&, int i) {
-      KJ_ASSERT(i == 123);
+    return JSG_VISITABLE_LAMBDA((v1 = VisitDetector(), v2 = VisitDetector(), v3 = VisitDetector()),
+        (v1, v3), (Lock&, int i) {
+          KJ_ASSERT(i == 123);
 
-      // Should return 5, since v1 and v3 are visited but v2 is not. Note that a discovery
-      // visitation pass happens immediately upon constructing wrappers -- we don't need to wait
-      // for an actual GC pass, which is nice for this test.
-      return v1.visited + v2.visited * 2 + v3.visited * 4;
-    });
+          // Should return 5, since v1 and v3 are visited but v2 is not. Note that a discovery
+          // visitation pass happens immediately upon constructing wrappers -- we don't need to wait
+          // for an actual GC pass, which is nice for this test.
+          return v1.visited + v2.visited * 2 + v3.visited * 4;
+        });
   }
 
   jsg::Function<int(int, int)> getTwoArgs() {
@@ -193,10 +185,8 @@ struct FunctionContext: public Object {
   }
 
   kj::String testTryCatch(Lock& js, jsg::Function<int()> thrower) {
-    return js.tryCatch([&]() {
-      return kj::str(thrower(js));
-    }, [&](Value exception) {
-      auto handle = exception.getHandle(js.v8Isolate);
+    return js.tryCatch([&]() { return kj::str(thrower(js)); }, [&](Value exception) {
+      auto handle = exception.getHandle(js);
       return kj::str("caught: ", handle);
     });
   }

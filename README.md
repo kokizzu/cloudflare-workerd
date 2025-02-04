@@ -27,26 +27,23 @@ You might use it:
 
 * **Always backwards compatible:** Updating `workerd` to a newer version will never break your JavaScript code. `workerd`'s version number is simply a date, corresponding to the maximum ["compatibility date"](https://developers.cloudflare.com/workers/platform/compatibility-dates/) supported by that version. You can always configure your worker to a past date, and `workerd` will emulate the API as it existed on that date.
 
-[Read the blog post to learn more about these principles.](https://blog.cloudflare.com/workerd-open-source-workers-runtime/).
+[Read the blog post to learn more about these principles.](https://blog.cloudflare.com/workerd-open-source-workers-runtime/)
 
-### WARNING: This is a beta. Work in progress.
+### WARNING: This is a beta. Work in progress
 
 Although most of `workerd`'s code has been used in Cloudflare Workers for years, the `workerd` configuration format and top-level server code is brand new. We don't yet have much experience running this in production. As such, there will be rough edges, maybe even a few ridiculous bugs. Deploy to production at your own risk (but please tell us what goes wrong!).
 
 The config format may change in backwards-incompatible ways before `workerd` leaves beta, but should remain stable after that.
 
-As of this writing, some major features are missing which we intend to fix shortly:
+A few caveats:
 
 * **General error logging** is awkward. Traditionally we have separated error logs into "application errors" (e.g. a Worker threw an exception from JavaScript) and "internal errors" (bugs in the implementation which the Workers team should address). We then sent these errors to completely different places. In the `workerd` world, the server admin wants to see both of these, so logging has become entirely different and, at the moment, is a bit ugly. For now, it may help to run `workerd` with the `--verbose` flag, which causes application errors to be written to standard error in the same way that internal errors are (but may also produce more noise). We'll be working on making this better out-of-the-box.
-* **Binary packages** for various distributions are not built yet. We intend to provide these once out of beta.
+* **Binary packages** are only available via npm, not as distro packages. This works well for testing with Miniflare, but is awkward for a production server that doesn't actually use Node at all.
 * **Multi-threading** is not implemented. `workerd` runs in a single-threaded event loop. For now, to utilize multiple cores, we suggest running multiple instances of `workerd` and balancing load across them. We will likely add some built-in functionality for this in the near future.
 * **Performance tuning** has not been done yet, and there is low-hanging fruit here. `workerd` performs decently as-is, but not spectacularly. Experiments suggest we can roughly double performance on a "hello world" load test with some tuning of compiler optimization flags and memory allocators.
-* **Durable Objects** are currently supported only in a mode that uses in-memory storage -- i.e., not actually "durable". This is useful for local testing of DO-based apps, but not for production. Durable Objects that are actually durable, or distributed across multiple machines, are a longer-term project. Cloudflare's internal implementation of this is heavily tied to the specifics of Cloudflare's network, so a new implementation needs to be developed for public consumption.
-* **Cache API** emulation is not implemented yet.
-* **Cron trigger** emulation is not supported yet. We need to figure out how, exactly, this should work in the first place. Typically if you have a cluster of machines, you only want a cron event to run on one of the machines, so some sort of coordination or external driver is needed.
+* **Durable Objects** currently always run on the same machine that requested them, using local disk storage. This is sufficient for testing and small services that fit on a single machine. In scalable production, though, you would presumably want Durable Objects to be distributed across many machines, always choosing the same machine for the same object.
 * **Parameterized workers** are not implemented yet. This is a new feature specified in the config schema, which doesn't have any precedent on Cloudflare.
-* **Devtools inspection** is not supported yet, but this should be straightforward to hook up.
-* **Tests** for most APIs are conspicuously missing. This is because the testing harness we have used for the past five years is deeply tied to the internal version of the codebase. We need to develop a new test harness for `workerd` and revise our API tests to use it. For the time being, we will be counting on the internal tests to catch bugs. We understand this is not ideal for external contributors trying to test their changes.
+* **Tests** for most APIs are conspicuously missing. This is because the testing harness we have used for the past five years is deeply tied to the internal version of the codebase. Ideally, we need to translate those tests into the new `workerd test` format and move them to this repo; this is an ongoing effort. For the time being, we will be counting on the internal tests to catch bugs. We understand this is not ideal for external contributors trying to test their changes.
 * **Documentation** is growing quickly but is definitely still a work in progress.
 
 ### WARNING: `workerd` is not a hardened sandbox
@@ -59,41 +56,59 @@ With that said, if you discover a bug that allows malicious code to break out of
 
 ### Supported Platforms
 
-In theory, `workerd` should work on any POSIX system that is supported by V8.
+In theory, `workerd` should work on any POSIX system that is supported by V8 and Windows.
 
-In practice, `workerd` is tested on Linux and macOS under x86-64 and arm64 architectures.
+In practice, `workerd` is tested on:
+
+* Linux and macOS (x86-64 and arm64 architectures)
+* Windows (x86-64 architecture)
+
 On other platforms, you may have to do tinkering to make things work.
-
-Windows users should run `workerd` under WSL (1 or 2).
 
 ### Building `workerd`
 
 To build `workerd`, you need:
 
-* [Bazel](https://bazel.build/)
+* Bazel
+  * If you use [Bazelisk](https://github.com/bazelbuild/bazelisk) (recommended), it will automatically download and use the right version of Bazel for building workerd.
 * On Linux:
-  * Clang 11+ (e.g. package `clang` on Debian Bullseye)
-  * libc++ 11+ (e.g. packages `libc++-dev` and `libc++abi-dev` on Debian Bullseye)
+  * We use the clang/LLVM toolchain to build workerd and support version 16 and higher. Earlier versions of clang may still work, but are not officially supported.
+  * Clang 16+ (e.g. package `clang-16` on Debian Bookworm). If clang is installed as `clang-<version>` please create a symlink to it in your PATH named `clang`, or use `--action_env=CC=clang-<version>` on `bazel` command lines to specify the compiler name.
+
+  * libc++ 16+ (e.g. packages `libc++-16-dev` and `libc++abi-16-dev`)
+  * LLD 16+ (e.g. package `lld-16`).
+  * `python3`, `python3-distutils`, and `tcl8.6`
 * On macOS:
-  * full XCode 13+ installation
+  * Xcode 16 installation (available on macOS 14 and higher). **Full Xcode is required**, the Xcode command line tools alone are **not sufficient** for building.
+  * Homebrew installed `tcl-tk` package (provides Tcl 8.6)
+* On Windows:
+  * Install [App Installer](https://learn.microsoft.com/en-us/windows/package-manager/winget/#install-winget)
+    from the Microsoft Store for the `winget` package manager and then run
+    [install-deps.bat](tools/windows/install-deps.bat) from an administrator prompt to install
+    bazelisk, LLVM, and other dependencies required to build workerd on Windows.
+  * Add `startup --output_user_root=C:/tmp` to the `.bazelrc` file in your user directory.
+  * When developing at the command-line, run [bazel-env.bat](tools/windows/bazel-env.bat) in your shell first
+    to select tools and Windows SDK versions before running bazel.
 
-You may then build using:
+You may then build `workerd` at the command-line with:
 
+```sh
+bazel build //src/workerd/server:workerd
 ```
-bazel build -c opt //src/workerd/server:workerd
-```
+
+You can also build from within Visual Studio Code using the instructions in [docs/vscode.md](docs/vscode.md).
 
 The compiled binary will be located at `bazel-bin/src/workerd/server/workerd`.
 
 If you run a Bazel build before you've installed some dependencies (like clang or libc++), and then you install the dependencies, you must resync locally cached toolchains, or clean Bazel's cache, otherwise you might get strange errors:
 
-```
+```sh
 bazel sync --configure
 ```
 
 If that fails, you can try:
 
-```
+```sh
 bazel clean --expunge
 ```
 
@@ -102,7 +117,7 @@ The cache will now be cleaned and you can try building again.
 If you have a fairly recent clang packages installed you can build a more performant release
 version of workerd:
 
-```
+```sh
 bazel build --config=thin-lto //src/workerd/server:workerd
 ```
 
@@ -132,7 +147,9 @@ const config :Workerd.Config = (
 
 const mainWorker :Workerd.Worker = (
   serviceWorkerScript = embed "hello.js",
-  compatibilityDate = "2022-09-16",
+  compatibilityDate = "2023-02-28",
+  # Learn more about compatibility dates at:
+  # https://developers.cloudflare.com/workers/platform/compatibility-dates/
 );
 ```
 
@@ -159,20 +176,25 @@ To serve your config, do:
 For more details about command-line usage, use `workerd --help`.
 
 Prebuilt binaries are distributed via `npm`. Run `npx workerd ...` to use these. If you're running a prebuilt binary, you'll need to make sure your system has the right dependencies installed:
-* On Linux:
-  * libc++ (e.g. the package `libc++1` on Debian Bullseye)
-* On macOS:
-  * The XCode command line tools, which can be installed with `xcode-select --install`
 
-> Note: if you're running `workerd` in Ubuntu in the GitHub Actions CI environment, you'll need to use `runs-on: ubuntu-22.04` rather than `runs-on: ubuntu-latest`
+* On Linux:
+  * glibc 2.35 or higher (already included on e.g. Ubuntu 22.04, Debian Bookworm)
+* On macOS:
+  * macOS 13.5 or higher
+  * The Xcode command line tools, which can be installed with `xcode-select --install`
+* x86_64 CPU with at least SSE4.2 and CLMUL ISA extensions, or arm64 CPU with CRC extension (enabled by default under armv8.1-a). These extensions are supported by all recent x86 and arm64 CPUs.
 
 ### Local Worker development with `wrangler`
 
-[Wrangler](https://developers.cloudflare.com/workers/wrangler/) has experimental support for running Workers with `workerd`:
+You can use [Wrangler](https://developers.cloudflare.com/workers/wrangler/) (v3.0 or greater) to develop Cloudflare Workers locally, using `workerd`. First, run the following command to configure Miniflare to use this build of `workerd`.
 
-`wrangler dev --experimental-local`
+```
+$ export MINIFLARE_WORKERD_PATH="<WORKERD_REPO_DIR>/bazel-bin/src/workerd/server/workerd"
+```
 
-This feature is under active development.
+Then, run:
+
+`wrangler dev`
 
 ### Serving in production
 
@@ -182,7 +204,7 @@ One good way to manage `workerd` in production is using `systemd`. Particularly 
 
 Here's an example system service file, assuming your config defines two sockets named `http` and `https`:
 
-```
+```sh
 # /etc/systemd/system/workerd.service
 [Unit]
 Description=workerd runtime
@@ -211,7 +233,7 @@ WantedBy=multi-user.target
 
 And corresponding sockets file:
 
-```
+```sh
 # /etc/systemd/system/workerd.socket
 [Unit]
 Description=sockets for workerd

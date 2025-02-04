@@ -1,4 +1,8 @@
-import assert from "assert";
+// Copyright (c) 2022-2023 Cloudflare, Inc.
+// Licensed under the Apache 2.0 license found in the LICENSE file or at:
+//     https://opensource.org/licenses/Apache-2.0
+
+import assert from "node:assert";
 import ts from "typescript";
 
 // Copies all properties of `ServiceWorkerGlobalScope` and its superclasses into
@@ -46,11 +50,11 @@ export function createGlobalScopeTransformer(
 function createInlineVisitor(
   ctx: ts.TransformationContext,
   inlines: Map<string, ts.TypeNode>
-): ts.Visitor {
+): ts.Visitor<ts.Node, ts.Node> {
   // If there's nothing to inline, just return identity visitor
   if (inlines.size === 0) return (node) => node;
 
-  const visitor: ts.Visitor = (node) => {
+  const visitor: ts.Visitor<ts.Node, ts.Node> = (node) => {
     // Recursively visit all nodes
     node = ts.visitEachChild(node, visitor, ctx);
 
@@ -65,62 +69,54 @@ function createInlineVisitor(
   return visitor;
 }
 
-export function createGlobalScopeVisitor(
+// Call with each potential method/property that could be extracted into a
+// global function/const.
+export function maybeExtractGlobalNode(
+  ctx: ts.TransformationContext,
+  node: ts.Node,
+  modifiers?: readonly ts.ModifierLike[]
+): ts.Statement | undefined {
+  if (
+    (ts.isMethodSignature(node) || ts.isMethodDeclaration(node)) &&
+    ts.isIdentifier(node.name)
+  ) {
+    return ctx.factory.createFunctionDeclaration(
+      modifiers,
+      /* asteriskToken */ undefined,
+      node.name,
+      node.typeParameters,
+      node.parameters,
+      node.type,
+      /* body */ undefined
+    );
+  }
+  if (
+    (ts.isPropertySignature(node) ||
+      ts.isPropertyDeclaration(node) ||
+      ts.isGetAccessorDeclaration(node)) &&
+    ts.isIdentifier(node.name)
+  ) {
+    assert(node.type !== undefined);
+    // Don't create global nodes for nested types, they'll already be there
+    if (!ts.isTypeQueryNode(node.type)) {
+      const varDeclaration = ctx.factory.createVariableDeclaration(
+        node.name,
+        /* exclamationToken */ undefined,
+        node.type
+      );
+      const varDeclarationList = ctx.factory.createVariableDeclarationList(
+        [varDeclaration],
+        ts.NodeFlags.Const // Use `const` instead of `var`
+      );
+      return ctx.factory.createVariableStatement(modifiers, varDeclarationList);
+    }
+  }
+}
+
+function createGlobalScopeVisitor(
   ctx: ts.TransformationContext,
   checker: ts.TypeChecker
 ) {
-  // Call with each potential method/property that could be extracted into a
-  // global function/const.
-  function maybeExtractGlobalNode(node: ts.Node): ts.Node | undefined {
-    if (
-      (ts.isMethodSignature(node) || ts.isMethodDeclaration(node)) &&
-      ts.isIdentifier(node.name)
-    ) {
-      const modifiers: ts.Modifier[] = [
-        ctx.factory.createToken(ts.SyntaxKind.ExportKeyword),
-        ctx.factory.createToken(ts.SyntaxKind.DeclareKeyword),
-      ];
-      return ctx.factory.createFunctionDeclaration(
-        /* decorators */ undefined,
-        modifiers,
-        /* asteriskToken */ undefined,
-        node.name,
-        node.typeParameters,
-        node.parameters,
-        node.type,
-        /* body */ undefined
-      );
-    }
-    if (
-      (ts.isPropertySignature(node) ||
-        ts.isPropertyDeclaration(node) ||
-        ts.isGetAccessorDeclaration(node)) &&
-      ts.isIdentifier(node.name)
-    ) {
-      assert(node.type !== undefined);
-      // Don't create global nodes for nested types, they'll already be there
-      if (!ts.isTypeQueryNode(node.type)) {
-        const modifiers: ts.Modifier[] = [
-          ctx.factory.createToken(ts.SyntaxKind.ExportKeyword),
-          ctx.factory.createToken(ts.SyntaxKind.DeclareKeyword),
-        ];
-        const varDeclaration = ctx.factory.createVariableDeclaration(
-          node.name,
-          /* exclamationToken */ undefined,
-          node.type
-        );
-        const varDeclarationList = ctx.factory.createVariableDeclarationList(
-          [varDeclaration],
-          ts.NodeFlags.Const // Use `const` instead of `var`
-        );
-        return ctx.factory.createVariableStatement(
-          modifiers,
-          varDeclarationList
-        );
-      }
-    }
-  }
-
   // Called with each class/interface that should have its methods/properties
   // extracted into global functions/consts. Recursively visits superclasses.
   function extractGlobalNodes(
@@ -152,7 +148,7 @@ export function createGlobalScopeVisitor(
         // class B<T> extends A<T> {}
         // class C extends B<string> {}
         // ```
-        clause = ts.visitNode(clause, inlineVisitor);
+        clause = ts.visitNode(clause, inlineVisitor, ts.isHeritageClause);
 
         for (const superType of clause.types) {
           const superTypeSymbol = checker.getSymbolAtLocation(
@@ -176,8 +172,11 @@ export function createGlobalScopeVisitor(
     }
 
     // Extract methods/properties
+    const modifiers: ts.Modifier[] = [
+      ctx.factory.createToken(ts.SyntaxKind.DeclareKeyword),
+    ];
     for (const member of node.members) {
-      const maybeNode = maybeExtractGlobalNode(member);
+      const maybeNode = maybeExtractGlobalNode(ctx, member, modifiers);
       if (maybeNode !== undefined) {
         nodes.push(ts.visitNode(maybeNode, inlineVisitor));
       }

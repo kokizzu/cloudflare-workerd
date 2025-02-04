@@ -3,25 +3,65 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 #include "jsg.h"  // can't include util.h directly due to weird cyclic dependency...
+#include "ser.h"
 #include "setup.h"
-#include <cxxabi.h>
+
 #include <kj/debug.h>
-#include <stdlib.h>
+
+#include <cstdlib>
+#include <set>
+
+#if !_WIN32
+#include <cxxabi.h>
+#endif
 
 #include <workerd/util/sentry.h>
 
 namespace workerd::jsg {
 
 bool getCaptureThrowsAsRejections(v8::Isolate* isolate) {
-  auto& jsgIsolate = *reinterpret_cast<IsolateBase*>(isolate->GetData(0));
+  auto& jsgIsolate = *reinterpret_cast<IsolateBase*>(isolate->GetData(SET_DATA_ISOLATE_BASE));
   return jsgIsolate.getCaptureThrowsAsRejections();
 }
 
 bool getCommonJsExportDefault(v8::Isolate* isolate) {
-  auto& jsgIsolate = *reinterpret_cast<IsolateBase*>(isolate->GetData(0));
+  auto& jsgIsolate = *reinterpret_cast<IsolateBase*>(isolate->GetData(SET_DATA_ISOLATE_BASE));
   return jsgIsolate.getCommonJsExportDefault();
 }
 
+bool getShouldSetToStringTag(v8::Isolate* isolate) {
+  auto& jsgIsolate = *reinterpret_cast<IsolateBase*>(isolate->GetData(SET_DATA_ISOLATE_BASE));
+  return jsgIsolate.shouldSetToStringTag();
+}
+
+#if _WIN32
+kj::String fullyQualifiedTypeName(const std::type_info& type) {
+  // type.name() returns a human-readable name on Windows:
+  // https://learn.microsoft.com/en-us/cpp/cpp/type-info-class?view=msvc-170
+  kj::StringPtr name = type.name();
+
+  // Remove struct prefix
+  if (name.startsWith("struct ")) {
+    name = name.slice(7);
+  }
+  // Remove class prefix
+  if (name.startsWith("class ")) {
+    name = name.slice(6);
+  }
+
+  kj::String result = kj::str(name);
+
+  // Replace instances of `anonymous namespace' with (anonymous namespace)
+  for (auto& c: result.asArray()) {
+    if (c == '`')
+      c = '(';
+    else if (c == '\'')
+      c = ')';
+  }
+
+  return kj::mv(result);
+}
+#else
 kj::String fullyQualifiedTypeName(const std::type_info& type) {
   int status;
   char* buf = abi::__cxa_demangle(type.name(), nullptr, nullptr, &status);
@@ -30,20 +70,21 @@ kj::String fullyQualifiedTypeName(const std::type_info& type) {
 
   return kj::mv(result);
 }
+#endif
 
 kj::String typeName(const std::type_info& type) {
   auto result = fullyQualifiedTypeName(type);
 
   // Strip namespace, if any.
-  KJ_IF_MAYBE(pos, result.findLast(':')) {
-    result = kj::str(result.slice(*pos + 1));
+  KJ_IF_SOME(pos, result.findLast(':')) {
+    result = kj::str(result.slice(pos + 1));
   }
 
   // Strip template args, if any.
   //
   // TODO(someday): Maybe just strip namespaces from each arg?
-  KJ_IF_MAYBE(pos, result.findFirst('<')) {
-    result = kj::str(result.slice(0, *pos));
+  KJ_IF_SOME(pos, result.findFirst('<')) {
+    result = kj::str(result.first(pos));
   }
 
   return kj::mv(result);
@@ -51,7 +92,7 @@ kj::String typeName(const std::type_info& type) {
 
 v8::Local<v8::Value> makeInternalError(v8::Isolate* isolate, kj::StringPtr internalMessage) {
   KJ_LOG(ERROR, internalMessage);
-  return v8::Exception::Error(v8Str(isolate, "internal error"));
+  return v8::Exception::Error(v8StrIntern(isolate, "internal error"));
 }
 
 namespace {
@@ -69,209 +110,33 @@ kj::StringPtr trimErrorMessage(kj::StringPtr errorString) {
   return "";
 }
 
-kj::Maybe<v8::Local<v8::Value>> tryMakeDomException(v8::Isolate* isolate,
-                                                    v8::Local<v8::String> message,
-                                                    kj::StringPtr errorName) {
-  // If the global scope object has a "DOMException" object that is a constructor, construct a new
-  // DOMException with the passed parameters. Note that this information is available at
-  // compile-time via TypeWrapper, but threading TypeWrapper up from liftKj() call sites all the
-  // way up here would be a readability nerf and lock users into our version of DOMException.
-
-  auto context = isolate->GetCurrentContext();
-  auto global = context->Global();
-
-  const auto toObject = [context](v8::Local<v8::Value> value) {
-    return check(value->ToObject(context));
-  };
-  const auto getInterned = [isolate, context](v8::Local<v8::Object> object, const char* s) {
-    auto name = v8Str(isolate, s, v8::NewStringType::kInternalized);
-    return check(object->Get(context, name));
-  };
-
-  if (auto domException = getInterned(global, "DOMException"); domException->IsObject()) {
-    if (auto domExceptionCtor = toObject(domException); domExceptionCtor->IsConstructor()) {
-      v8::Local<v8::Value> args[2] = {
-        message, v8Str(isolate, errorName)
-      };
-      return check(domExceptionCtor->CallAsConstructor(context, 2, args));
-    }
-  }
-
-  return nullptr;
-}
-
-v8::Local<v8::Value> tryMakeDomExceptionOrDefaultError(
-    v8::Isolate* isolate, v8::Local<v8::String> message, kj::StringPtr errorName) {
-  return tryMakeDomException(isolate, message, errorName).orDefault([&]() {
-    return v8::Exception::Error(message);
-  });
-}
-
-v8::Local<v8::Value> tryMakeDomExceptionOrDefaultError(
-    v8::Isolate* isolate, kj::StringPtr message, kj::StringPtr errorName) {
-  return tryMakeDomExceptionOrDefaultError(isolate, v8Str(isolate, message), errorName);
-}
-
 bool setRemoteError(v8::Isolate* isolate, v8::Local<v8::Value>& exception) {
   // If an exception was tunneled, we add a property `.remote` to the Javascript error.
   KJ_ASSERT(exception->IsObject());
   auto obj = exception.As<v8::Object>();
-  return jsg::check(
-    obj->Set(
-      isolate->GetCurrentContext(),
-      jsg::v8Str(isolate, "remote"_kj, v8::NewStringType::kInternalized),
-      v8::True(isolate)));
+  return jsg::check(obj->Set(
+      isolate->GetCurrentContext(), jsg::v8StrIntern(isolate, "remote"_kj), v8::True(isolate)));
+}
+
+bool setRetryableError(v8::Isolate* isolate, v8::Local<v8::Value>& exception) {
+  KJ_ASSERT(exception->IsObject());
+  auto obj = exception.As<v8::Object>();
+  return jsg::check(obj->Set(
+      isolate->GetCurrentContext(), jsg::v8StrIntern(isolate, "retryable"_kj), v8::True(isolate)));
+}
+
+bool setOverloadedError(v8::Isolate* isolate, v8::Local<v8::Value>& exception) {
+  KJ_ASSERT(exception->IsObject());
+  auto obj = exception.As<v8::Object>();
+  return jsg::check(obj->Set(
+      isolate->GetCurrentContext(), jsg::v8StrIntern(isolate, "overloaded"_kj), v8::True(isolate)));
 }
 
 bool setDurableObjectResetError(v8::Isolate* isolate, v8::Local<v8::Value>& exception) {
   KJ_ASSERT(exception->IsObject());
   auto obj = exception.As<v8::Object>();
-  return jsg::check(
-    obj->Set(
-      isolate->GetCurrentContext(),
-      jsg::v8Str(isolate, "durableObjectReset"_kj, v8::NewStringType::kInternalized),
-      v8::True(isolate)));
-}
-
-struct TunneledErrorType {
-  kj::StringPtr type;
-  // What type of JavaScript error to throw.
-
-  bool isInternal;
-  // Is this error internal? If so, the error message should be logged to syslog and hidden from
-  // the app.
-
-  bool isFromRemote;
-  // Was the error tunneled from either a worker or an actor?
-
-  bool isDurableObjectReset;
-  // Was the error created because a durable object is broken?
-};
-
-namespace {
-  constexpr auto ERROR_PREFIX_DELIM = "; "_kj;
-  constexpr auto ERROR_REMOTE_PREFIX = "remote."_kj;
-  constexpr auto ERROR_TUNNELED_PREFIX_CFJS = "cfjs."_kj;
-  constexpr auto ERROR_TUNNELED_PREFIX_JSG = "jsg."_kj;
-  constexpr auto ERROR_INTERNAL_SOURCE_PREFIX_CFJS = "cfjs-internal."_kj;
-  constexpr auto ERROR_INTERNAL_SOURCE_PREFIX_JSG = "jsg-internal."_kj;
-}
-TunneledErrorType tunneledErrorType(kj::StringPtr internalMessage) {
-  // A tunneled error in an internal message is prefixed by one of the following patterns,
-  // anchored at the beginning of the message:
-  //   jsg.
-  //   expected <...>; jsg.
-  //   broken.<...>; jsg.
-  // where <...> is some failed expectation from e.g. a KJ_REQUIRE.
-  //
-  // A tunneled error might have a prefix "remote.". This indicates it was tunneled from an actor or
-  // from one worker to another. If this prefix is present, we set `isFromRemote` to true, remove
-  // the "remote." prefix, and continue processing the rest of the error.
-  //
-  // Additionally, a prefix of `jsg-internal.` instead of `jsg.` means "throw a specific
-  // JavaScript error type, but still hide the message text from the app".
-
-  internalMessage = stripRemoteExceptionPrefix(internalMessage);
-
-  struct Properties {
-    bool isFromRemote = false;
-    bool isDurableObjectReset = false;
-  };
-  Properties properties;
-
-  // Remove `remote.` (if present). Note that there are cases where we return a tunneled error
-  // through multiple workers, so let's be paranoid and allow for multiple "remote." prefxies.
-  while (internalMessage.startsWith(ERROR_REMOTE_PREFIX)) {
-    properties.isFromRemote = true;
-    internalMessage = internalMessage.slice(ERROR_REMOTE_PREFIX.size());
-  }
-
-  auto findDelim = [](kj::StringPtr msg) -> size_t {
-    // Either return 0 if no matches or the index past the first delim if there are.
-    auto match = strstr(msg.cStr(), ERROR_PREFIX_DELIM.cStr());
-    if (!match) {
-      return 0;
-    } else {
-      return (match - msg.cStr()) + ERROR_PREFIX_DELIM.size();
-    }
-  };
-
-  auto tryExtractError = [](kj::StringPtr msg, Properties properties)
-      -> kj::Maybe<TunneledErrorType> {
-    if (msg.startsWith(ERROR_TUNNELED_PREFIX_CFJS)) {
-      return TunneledErrorType{
-        .type = msg.slice(ERROR_TUNNELED_PREFIX_CFJS.size()),
-        .isInternal = false,
-        .isFromRemote = properties.isFromRemote,
-        .isDurableObjectReset = properties.isDurableObjectReset,
-      };
-    }
-    if (msg.startsWith(ERROR_TUNNELED_PREFIX_JSG)) {
-      return TunneledErrorType{
-        .type = msg.slice(ERROR_TUNNELED_PREFIX_JSG.size()),
-        .isInternal = false,
-        .isFromRemote = properties.isFromRemote,
-        .isDurableObjectReset = properties.isDurableObjectReset,
-      };
-    }
-    if (msg.startsWith(ERROR_INTERNAL_SOURCE_PREFIX_CFJS)) {
-      return TunneledErrorType{
-        .type = msg.slice(ERROR_INTERNAL_SOURCE_PREFIX_CFJS.size()),
-        .isInternal = true,
-        .isFromRemote = properties.isFromRemote,
-        .isDurableObjectReset = properties.isDurableObjectReset,
-      };
-    }
-    if (msg.startsWith(ERROR_INTERNAL_SOURCE_PREFIX_JSG)) {
-      return TunneledErrorType{
-        .type = msg.slice(ERROR_INTERNAL_SOURCE_PREFIX_JSG.size()),
-        .isInternal = true,
-        .isFromRemote = properties.isFromRemote,
-        .isDurableObjectReset = properties.isDurableObjectReset,
-      };
-    }
-
-    return nullptr;
-  };
-
-  auto makeDefaultError = [](Properties properties) {
-    return TunneledErrorType{
-      .type = "Error",
-      .isInternal = true,
-      .isFromRemote = properties.isFromRemote,
-      .isDurableObjectReset = properties.isDurableObjectReset,
-    };
-  };
-
-  if (internalMessage.startsWith("expected ")) {
-    // This was a test assertion, peel away delimiters until either we find an error or there are
-    // none left.
-    auto idx = findDelim(internalMessage);
-    while(idx) {
-      internalMessage = internalMessage.slice(idx);
-      KJ_IF_MAYBE(e, tryExtractError(internalMessage, properties)) {
-        return kj::mv(*e);
-      }
-      idx = findDelim(internalMessage);
-    }
-
-    // We failed to extract an expected error, make a default one.
-    return makeDefaultError(properties);
-  }
-
-  while (internalMessage.startsWith("broken.")) {
-    properties.isDurableObjectReset = true;
-
-    // Trim away all broken prefixes, they are not allowed to have internal delimiters.
-    internalMessage = internalMessage.slice(findDelim(internalMessage));
-  }
-
-  // There are no prefixes left, just try to extract the error.
-  KJ_IF_MAYBE(e, tryExtractError(internalMessage, properties)) {
-    return kj::mv(*e);
-  } else {
-    return makeDefaultError(properties);
-  }
+  return jsg::check(obj->Set(isolate->GetCurrentContext(),
+      jsg::v8StrIntern(isolate, "durableObjectReset"_kj), v8::True(isolate)));
 }
 struct DecodedException {
   v8::Local<v8::Value> handle;
@@ -280,8 +145,8 @@ struct DecodedException {
   bool isDurableObjectReset;
 };
 
-DecodedException decodeTunneledException(v8::Isolate* isolate,
-                                         kj::StringPtr internalMessage) {
+DecodedException decodeTunneledException(
+    v8::Isolate* isolate, kj::StringPtr internalMessage, kj::Exception::Type excType) {
   // We currently support tunneling the following error types:
   //
   // - Error:        While the Web IDL spec claims this is reserved for use by program authors, this
@@ -302,7 +167,7 @@ DecodedException decodeTunneledException(v8::Isolate* isolate,
   // TODO(someday): Support arbitrary user-defined error types, not just Error?
   auto tunneledInfo = tunneledErrorType(internalMessage);
 
-  auto errorType = tunneledInfo.type;
+  auto errorType = tunneledInfo.message;
   auto appMessage = [&](kj::StringPtr errorString) -> kj::StringPtr {
     if (tunneledInfo.isInternal) {
       return "internal error"_kj;
@@ -315,57 +180,52 @@ DecodedException decodeTunneledException(v8::Isolate* isolate,
   result.isFromRemote = tunneledInfo.isFromRemote;
   result.isDurableObjectReset = tunneledInfo.isDurableObjectReset;
 
-  // TODO(cleanup): This code has gotten pretty ugly, could probably use some refactoring.
-  if (errorType.startsWith("Error")) {
-    auto message = appMessage(errorType.slice(strlen("Error")));
-    result.handle = v8::Exception::Error(v8Str(isolate, message));
-  } else if (errorType.startsWith("RangeError")) {
-    auto message = appMessage(errorType.slice(strlen("RangeError")));
-    result.handle = v8::Exception::RangeError(v8Str(isolate, message));
-  } else if (errorType.startsWith("TypeError")) {
-    auto message = appMessage(errorType.slice(strlen("TypeError")));
-    result.handle = v8::Exception::TypeError(v8Str(isolate, message));
-  } else if (errorType.startsWith("SyntaxError")) {
-    auto message = appMessage(errorType.slice(strlen("SyntaxError")));
-    result.handle = v8::Exception::SyntaxError(v8Str(isolate, message));
-  } else if (errorType.startsWith("ReferenceError")) {
-    auto message = appMessage(errorType.slice(strlen("ReferenceError")));
-    result.handle = v8::Exception::ReferenceError(v8Str(isolate, message));
-  } else if (errorType.startsWith("CompileError")) {
-    auto message = appMessage(errorType.slice(strlen("CompileError")));
-    result.handle = v8::Exception::WasmCompileError(v8Str(isolate, message));
-  } else if (errorType.startsWith("LinkError")) {
-    auto message = appMessage(errorType.slice(strlen("LinkError")));
-    result.handle = v8::Exception::WasmCompileError(v8Str(isolate, message));
-  } else if (errorType.startsWith("RuntimeError")) {
-    auto message = appMessage(errorType.slice(strlen("RuntimeError")));
-    result.handle = v8::Exception::WasmCompileError(v8Str(isolate, message));
-  } else if (errorType.startsWith("DOMException")) {
-    errorType = errorType.slice(strlen("DOMException"));
-    // DOMExceptions require a parenthesized error name argument, like DOMException(SyntaxError).
-    if (errorType.startsWith("(")) {
-      KJ_IF_MAYBE(closeParen, errorType.findFirst(')')) {
-        auto errorName = kj::str(errorType.slice(1, *closeParen));
-        auto message = appMessage(errorType.slice(2 + errorName.size()));
-        result.handle = tryMakeDomExceptionOrDefaultError(isolate, message, errorName);
-      } else {
-        // no closing parenthesis
-        result.handle = v8::Exception::Error(v8Str(isolate, "internal error"));
-        result.isInternal = true;
-      }
-    } else {
-      // no opening parenthesis
-      result.handle = v8::Exception::Error(v8Str(isolate, "internal error"));
-      result.isInternal = true;
-    }
-  } else {
-    // unrecognized exception type
-    result.handle = v8::Exception::Error(v8Str(isolate, "internal error"));
-    result.isInternal = true;
+#define HANDLE_V8_ERROR(error_name, error_type)                                                    \
+  if (errorType.startsWith(error_name)) {                                                          \
+    auto message = appMessage(errorType.slice(strlen(error_name)));                                \
+    result.handle = v8::Exception::error_type(v8Str(isolate, message));                            \
+    break;                                                                                         \
   }
+
+  do {
+    if (tunneledInfo.isJsgError) {
+      HANDLE_V8_ERROR("Error", Error);
+      HANDLE_V8_ERROR("RangeError", RangeError);
+      HANDLE_V8_ERROR("TypeError", TypeError);
+      HANDLE_V8_ERROR("SyntaxError", SyntaxError);
+      HANDLE_V8_ERROR("ReferenceError", ReferenceError);
+      HANDLE_V8_ERROR("CompileError", WasmCompileError);
+      HANDLE_V8_ERROR("LinkError", WasmCompileError);
+      HANDLE_V8_ERROR("RuntimeError", WasmCompileError);
+
+      // DOMExceptions require a parenthesized error name argument, like DOMException(SyntaxError).
+      if (errorType.startsWith("DOMException(")) {
+        errorType = errorType.slice(strlen("DOMException("));
+        // Check for closing brace
+        KJ_IF_SOME(closeParen, errorType.findFirst(')')) {
+          auto& js = Lock::from(isolate);
+          auto errorName = kj::str(errorType.first(closeParen));
+          auto message = appMessage(errorType.slice(1 + closeParen));
+          auto exception = js.domException(kj::mv(errorName), kj::str(message));
+          result.handle = KJ_ASSERT_NONNULL(exception.tryGetHandle(js));
+          break;
+        }
+      }
+    }
+    // unrecognized exception type
+    result.handle = v8::Exception::Error(v8StrIntern(isolate, "internal error"));
+    result.isInternal = true;
+  } while (false);
+#undef HANDLE_V8_ERROR
 
   if (result.isFromRemote) {
     setRemoteError(isolate, result.handle);
+  }
+
+  if (excType == kj::Exception::Type::DISCONNECTED) {
+    setRetryableError(isolate, result.handle);
+  } else if (excType == kj::Exception::Type::OVERLOADED) {
+    setOverloadedError(isolate, result.handle);
   }
 
   if (result.isDurableObjectReset) {
@@ -377,34 +237,36 @@ DecodedException decodeTunneledException(v8::Isolate* isolate,
 
 }  // namespace
 
-kj::String extractTunneledExceptionDescription(kj::StringPtr message) {
-  return kj::str(tunneledErrorType(message).type);
-}
-
-kj::String annotateBroken(kj::StringPtr internalMessage, kj::StringPtr brokenessReason) {
-  // TODO(soon) Once we support multiple brokenness reasons, we can make this much simpler.
-
-  auto tunneledInfo = tunneledErrorType(internalMessage);
-
-  kj::StringPtr remotePrefix;
-  if (tunneledInfo.isFromRemote) {
-    remotePrefix = ERROR_REMOTE_PREFIX;
+kj::StringPtr extractTunneledExceptionDescription(kj::StringPtr message) {
+  auto tunneledError = tunneledErrorType(message);
+  if (tunneledError.isInternal) {
+    return "Error: internal error";
+  } else {
+    return tunneledError.message;
   }
-
-  kj::StringPtr prefixType = ERROR_TUNNELED_PREFIX_JSG;
-  if (tunneledInfo.isInternal) {
-    prefixType = ERROR_INTERNAL_SOURCE_PREFIX_JSG;
-  }
-
-  return kj::str(
-      remotePrefix, brokenessReason, ERROR_PREFIX_DELIM, prefixType, tunneledInfo.type);
 }
 
 v8::Local<v8::Value> makeInternalError(v8::Isolate* isolate, kj::Exception&& exception) {
   auto desc = exception.getDescription();
-  auto tunneledException = decodeTunneledException(isolate, desc);
+
+  // TODO(someday): Deserialize encoded V8 exception from
+  //   exception.getDetail(TUNNELED_EXCEPTION_DETAIL_ID), if present. WARNING: We must think
+  //   carefully about security in the case that the exception has passed between workers that
+  //   don't trust each other. Perhaps we should explicitly remove the stack trace in this case.
+  //   REMINDER: Worker::logUncaughtException() currently deserializes TUNNELED_EXCEPTION_DETAIL_ID
+  //   in order to extract a full stack trace. Once we do it here, we can remove the code from
+  //   there.
+
+  auto tunneledException = decodeTunneledException(isolate, desc, exception.getType());
 
   if (tunneledException.isInternal) {
+    auto& observer = IsolateBase::from(isolate).getObserver();
+    observer.reportInternalException(exception,
+        {
+          .isInternal = tunneledException.isInternal,
+          .isFromRemote = tunneledException.isFromRemote,
+          .isDurableObjectReset = tunneledException.isDurableObjectReset,
+        });
     // Don't log exceptions that have been explicitly marked with worker_do_not_log or are
     // DISCONNECTED exceptions as these are unlikely to represent bugs worth tracking.
     if (exception.getType() != kj::Exception::Type::DISCONNECTED &&
@@ -415,10 +277,13 @@ v8::Local<v8::Value> makeInternalError(v8::Isolate* isolate, kj::Exception&& exc
     }
 
     if (exception.getType() == kj::Exception::Type::DISCONNECTED) {
-      auto exception = v8::Exception::Error(v8Str(isolate, "Network connection lost."_kj));
+      auto exception = v8::Exception::Error(v8StrIntern(isolate, "Network connection lost."_kj));
       if (tunneledException.isFromRemote) {
         setRemoteError(isolate, exception);
       }
+
+      // DISCONNECTED exceptions are considered retryable
+      setRetryableError(isolate, exception);
 
       if (tunneledException.isDurableObjectReset) {
         setDurableObjectResetError(isolate, exception);
@@ -432,13 +297,24 @@ v8::Local<v8::Value> makeInternalError(v8::Isolate* isolate, kj::Exception&& exc
 }
 
 Value Lock::exceptionToJs(kj::Exception&& exception) {
-  v8::HandleScope scope(v8Isolate);
-  return Value(v8Isolate, makeInternalError(v8Isolate, kj::mv(exception)));
+  return withinHandleScope(
+      [&] { return Value(v8Isolate, makeInternalError(v8Isolate, kj::mv(exception))); });
+}
+
+JsRef<JsValue> Lock::exceptionToJsValue(kj::Exception&& exception) {
+  return withinHandleScope([&] {
+    JsValue val = JsValue(makeInternalError(v8Isolate, kj::mv(exception)));
+    return val.addRef(*this);
+  });
 }
 
 void Lock::throwException(Value&& exception) {
-  v8::HandleScope scope(v8Isolate);
-  v8Isolate->ThrowException(exception.getHandle(v8Isolate));
+  withinHandleScope([&] { v8Isolate->ThrowException(exception.getHandle(*this)); });
+  throw JsExceptionThrown();
+}
+
+void Lock::throwException(const JsValue& exception) {
+  withinHandleScope([&] { v8Isolate->ThrowException(exception); });
   throw JsExceptionThrown();
 }
 
@@ -447,7 +323,7 @@ void throwInternalError(v8::Isolate* isolate, kj::StringPtr internalMessage) {
 }
 
 void throwInternalError(v8::Isolate* isolate, kj::Exception&& exception) {
-  KJ_IF_MAYBE(renderingError, kj::runCatchingExceptions([&]() {
+  KJ_IF_SOME(renderingError, kj::runCatchingExceptions([&]() {
     isolate->ThrowException(makeInternalError(isolate, kj::mv(exception)));
   })) {
     KJ_LOG(ERROR, "error rendering exception", renderingError);
@@ -456,54 +332,66 @@ void throwInternalError(v8::Isolate* isolate, kj::Exception&& exception) {
   }
 }
 
+void addExceptionDetail(Lock& js, kj::Exception& exception, v8::Local<v8::Value> handle) {
+  v8::TryCatch tryCatch(js.v8Isolate);
+  try {
+    Serializer ser(js,
+        {
+          // Make sure we don't break compatibility if V8 introduces a new version. This value can
+          // be bumped to match the new version once all of production is updated to understand it.
+          .version = 15,
+        });
+    ser.write(js, JsValue(handle));
+    exception.setDetail(TUNNELED_EXCEPTION_DETAIL_ID, ser.release().data);
+  } catch (JsExceptionThrown&) {
+    // Either:
+    // a. The exception is not serializable, and we caught the exception. We will just ignore it
+    //    and proceed without annotating.
+    // b. The isolate's execution is being terminated, and so tryCatch.CanContinue() is false. In
+    //    this case we cannot serialize the exception, but again we'll just move on without the
+    //    annotation.
+  }
+}
+
 static kj::String typeErrorMessage(TypeErrorContext c, const char* expectedType) {
   kj::String type;
 
-  KJ_IF_MAYBE(t, c.type) {
-    type = typeName(*t);
+  KJ_IF_SOME(t, c.type) {
+    type = typeName(t);
   }
 
   switch (c.kind) {
-  case TypeErrorContext::METHOD_ARGUMENT:
-    return kj::str(
-        "Failed to execute '", c.memberName, "' on '", type, "': parameter ", c.argumentIndex + 1,
-        " is not of type '", expectedType, "'.");
-  case TypeErrorContext::CONSTRUCTOR_ARGUMENT:
-    return kj::str(
-        "Failed to construct '", type, "': constructor parameter ", c.argumentIndex + 1,
-        " is not of type '", expectedType, "'.");
-  case TypeErrorContext::SETTER_ARGUMENT:
-    return kj::str(
-        "Failed to set the '", c.memberName, "' property on '", type,
-        "': the provided value is not of type '", expectedType, "'.");
-  case TypeErrorContext::STRUCT_FIELD:
-    return kj::str(
-        "Incorrect type for the '", c.memberName, "' field on '", type,
-        "': the provided value is not of type '", expectedType, "'.");
-  case TypeErrorContext::ARRAY_ELEMENT:
-    return kj::str(
-        "Incorrect type for array element ", c.argumentIndex,
-        ": the provided value is not of type '", expectedType, "'.");
-  case TypeErrorContext::CALLBACK_ARGUMENT:
-    return kj::str(
-        "Failed to execute function: parameter ", c.argumentIndex + 1, " is not of type '",
-        expectedType, "'.");
-  case TypeErrorContext::CALLBACK_RETURN:
-    return kj::str("Callback returned incorrect type; expected '", expectedType, "'");
-  case TypeErrorContext::DICT_KEY:
-    return kj::str(
-        "Incorrect type for map entry '", c.memberName,
-        "': the provided key is not of type '", expectedType, "'.");
-  case TypeErrorContext::DICT_FIELD:
-    return kj::str(
-        "Incorrect type for map entry '", c.memberName,
-        "': the provided value is not of type '", expectedType, "'.");
-  case TypeErrorContext::PROMISE_RESOLUTION:
-    return kj::str(
-        "Incorrect type for Promise: the Promise did not resolve to '", expectedType, "'.");
-  case TypeErrorContext::OTHER:
-    return kj::str(
-        "Incorrect type: the provided value is not of type '", expectedType, "'.");
+    case TypeErrorContext::METHOD_ARGUMENT:
+      return kj::str("Failed to execute '", c.memberName, "' on '", type, "': parameter ",
+          c.argumentIndex + 1, " is not of type '", expectedType, "'.");
+    case TypeErrorContext::CONSTRUCTOR_ARGUMENT:
+      return kj::str("Failed to construct '", type, "': constructor parameter ",
+          c.argumentIndex + 1, " is not of type '", expectedType, "'.");
+    case TypeErrorContext::SETTER_ARGUMENT:
+      return kj::str("Failed to set the '", c.memberName, "' property on '", type,
+          "': the provided value is not of type '", expectedType, "'.");
+    case TypeErrorContext::STRUCT_FIELD:
+      return kj::str("Incorrect type for the '", c.memberName, "' field on '", type,
+          "': the provided value is not of type '", expectedType, "'.");
+    case TypeErrorContext::ARRAY_ELEMENT:
+      return kj::str("Incorrect type for array element ", c.argumentIndex,
+          ": the provided value is not of type '", expectedType, "'.");
+    case TypeErrorContext::CALLBACK_ARGUMENT:
+      return kj::str("Failed to execute function: parameter ", c.argumentIndex + 1,
+          " is not of type '", expectedType, "'.");
+    case TypeErrorContext::CALLBACK_RETURN:
+      return kj::str("Callback returned incorrect type; expected '", expectedType, "'");
+    case TypeErrorContext::DICT_KEY:
+      return kj::str("Incorrect type for map entry '", c.memberName,
+          "': the provided key is not of type '", expectedType, "'.");
+    case TypeErrorContext::DICT_FIELD:
+      return kj::str("Incorrect type for map entry '", c.memberName,
+          "': the provided value is not of type '", expectedType, "'.");
+    case TypeErrorContext::PROMISE_RESOLUTION:
+      return kj::str(
+          "Incorrect type for Promise: the Promise did not resolve to '", expectedType, "'.");
+    case TypeErrorContext::OTHER:
+      return kj::str("Incorrect type: the provided value is not of type '", expectedType, "'.");
   };
 
   KJ_UNREACHABLE;
@@ -512,41 +400,37 @@ static kj::String typeErrorMessage(TypeErrorContext c, const char* expectedType)
 static kj::String unimplementedErrorMessage(TypeErrorContext c) {
   kj::String type;
 
-  KJ_IF_MAYBE(t, c.type) {
-    type = typeName(*t);
+  KJ_IF_SOME(t, c.type) {
+    type = typeName(t);
   }
 
   switch (c.kind) {
-  case TypeErrorContext::METHOD_ARGUMENT:
-    return kj::str(
-        "Failed to execute '", c.memberName, "' on '", type, "': parameter ", c.argumentIndex + 1,
-        " is not implemented.");
-  case TypeErrorContext::CONSTRUCTOR_ARGUMENT:
-    return kj::str(
-        "Failed to construct '", type, "': constructor parameter ", c.argumentIndex + 1,
-        " is not implemented.");
-  case TypeErrorContext::SETTER_ARGUMENT:
-    return kj::str(
-        "Failed to set the '", c.memberName, "' property on '", type,
-        "': the ability to set this property is not implemented.");
-  case TypeErrorContext::STRUCT_FIELD:
-    return kj::str(
-        "The '", c.memberName, "' field on '", type, "' is not implemented.");
-  case TypeErrorContext::ARRAY_ELEMENT:
-    KJ_UNREACHABLE;
-  case TypeErrorContext::CALLBACK_ARGUMENT:
-    return kj::str(
-        "Failed to execute function: parameter ", c.argumentIndex + 1, " is not implemented.");
-  case TypeErrorContext::CALLBACK_RETURN:
-    KJ_UNREACHABLE;
-  case TypeErrorContext::DICT_KEY:
-    KJ_UNREACHABLE;
-  case TypeErrorContext::DICT_FIELD:
-    KJ_UNREACHABLE;
-  case TypeErrorContext::PROMISE_RESOLUTION:
-    KJ_UNREACHABLE;
-  case TypeErrorContext::OTHER:
-    KJ_UNREACHABLE;
+    case TypeErrorContext::METHOD_ARGUMENT:
+      return kj::str("Failed to execute '", c.memberName, "' on '", type, "': parameter ",
+          c.argumentIndex + 1, " is not implemented.");
+    case TypeErrorContext::CONSTRUCTOR_ARGUMENT:
+      return kj::str("Failed to construct '", type, "': constructor parameter ",
+          c.argumentIndex + 1, " is not implemented.");
+    case TypeErrorContext::SETTER_ARGUMENT:
+      return kj::str("Failed to set the '", c.memberName, "' property on '", type,
+          "': the ability to set this property is not implemented.");
+    case TypeErrorContext::STRUCT_FIELD:
+      return kj::str("The '", c.memberName, "' field on '", type, "' is not implemented.");
+    case TypeErrorContext::ARRAY_ELEMENT:
+      KJ_UNREACHABLE;
+    case TypeErrorContext::CALLBACK_ARGUMENT:
+      return kj::str(
+          "Failed to execute function: parameter ", c.argumentIndex + 1, " is not implemented.");
+    case TypeErrorContext::CALLBACK_RETURN:
+      KJ_UNREACHABLE;
+    case TypeErrorContext::DICT_KEY:
+      KJ_UNREACHABLE;
+    case TypeErrorContext::DICT_FIELD:
+      KJ_UNREACHABLE;
+    case TypeErrorContext::PROMISE_RESOLUTION:
+      KJ_UNREACHABLE;
+    case TypeErrorContext::OTHER:
+      KJ_UNREACHABLE;
   };
 
   KJ_UNREACHABLE;
@@ -557,33 +441,32 @@ void throwTypeError(v8::Isolate* isolate, kj::StringPtr message) {
   throw JsExceptionThrown();
 }
 
-void throwTypeError(v8::Isolate* isolate,
-    TypeErrorContext errorContext, kj::String expectedType) {
+void throwTypeError(v8::Isolate* isolate, TypeErrorContext errorContext, kj::String expectedType) {
   kj::String message = typeErrorMessage(errorContext, expectedType.cStr());
   throwTypeError(isolate, message);
 }
 
-void throwTypeError(v8::Isolate* isolate,
-    TypeErrorContext errorContext, const char* expectedType) {
+void throwTypeError(v8::Isolate* isolate, TypeErrorContext errorContext, const char* expectedType) {
   kj::String message = typeErrorMessage(errorContext, expectedType);
   throwTypeError(isolate, message);
 }
 
-void throwTypeError(v8::Isolate* isolate,
-    TypeErrorContext errorContext, const std::type_info& expectedType) {
+void throwTypeError(
+    v8::Isolate* isolate, TypeErrorContext errorContext, const std::type_info& expectedType) {
   if (expectedType == typeid(Unimplemented)) {
-    isolate->ThrowException(v8::Exception::Error(
-        v8Str(isolate, unimplementedErrorMessage(errorContext))));
+    isolate->ThrowError(v8StrIntern(isolate, unimplementedErrorMessage(errorContext)));
     throw JsExceptionThrown();
   } else {
     throwTypeError(isolate, errorContext, typeName(expectedType).cStr());
   }
 }
 
+static constexpr auto kIllegalConstructorMessage = "Illegal constructor";
+
 void throwIllegalConstructor(const v8::FunctionCallbackInfo<v8::Value>& args) {
   auto isolate = args.GetIsolate();
-  kj::StringPtr message = "Illegal constructor";
-  isolate->ThrowException(v8::Exception::TypeError(v8Str(isolate, message)));
+  isolate->ThrowException(
+      v8::Exception::TypeError(v8StrIntern(isolate, kIllegalConstructorMessage)));
 }
 
 void throwTunneledException(v8::Isolate* isolate, v8::Local<v8::Value> exception) {
@@ -591,29 +474,17 @@ void throwTunneledException(v8::Isolate* isolate, v8::Local<v8::Value> exception
 }
 
 kj::Exception createTunneledException(v8::Isolate* isolate, v8::Local<v8::Value> exception) {
-  auto& jsgIsolate = *reinterpret_cast<IsolateBase*>(isolate->GetData(0));
+  auto& jsgIsolate = *reinterpret_cast<IsolateBase*>(isolate->GetData(SET_DATA_ISOLATE_BASE));
   return jsgIsolate.unwrapException(isolate->GetCurrentContext(), exception);
 }
 
 kj::Exception Lock::exceptionToKj(Value&& exception) {
-  v8::HandleScope scope(v8Isolate);
-  return createTunneledException(v8Isolate, exception.getHandle(v8Isolate));
+  return withinHandleScope(
+      [&] { return createTunneledException(v8Isolate, exception.getHandle(*this)); });
 }
 
-kj::StringPtr stripRemoteExceptionPrefix(kj::StringPtr internalMessage) {
-  while (internalMessage.startsWith("remote exception: "_kj)) {
-    // Exception was passed over RPC.
-    internalMessage = internalMessage.slice("remote exception: "_kj.size());
-  }
-  return internalMessage;
-}
-
-bool isTunneledException(kj::StringPtr internalMessage) {
-  return !tunneledErrorType(internalMessage).isInternal;
-}
-
-bool isDoNotLogException(kj::StringPtr internalMessage) {
-  return strstr(internalMessage.cStr(), "worker_do_not_log") != nullptr;
+kj::Exception Lock::exceptionToKj(const JsValue& exception) {
+  return withinHandleScope([&] { return createTunneledException(v8Isolate, exception); });
 }
 
 static kj::byte DUMMY = 0;
@@ -665,14 +536,11 @@ void recursivelyFreeze(v8::Local<v8::Context> context, v8::Local<v8::Value> valu
   } else if (value->IsObject()) {
     v8::HandleScope scope(context->GetIsolate());
     auto obj = value.As<v8::Object>();
-    auto names = check(obj->GetPropertyNames(context,
-        v8::KeyCollectionMode::kOwnOnly,
-        v8::ALL_PROPERTIES,
-        v8::IndexFilter::kIncludeIndices));
+    auto names = check(obj->GetPropertyNames(context, v8::KeyCollectionMode::kOwnOnly,
+        v8::ALL_PROPERTIES, v8::IndexFilter::kIncludeIndices));
 
     for (auto i: kj::zeroTo(names->Length())) {
-      recursivelyFreeze(context,
-          check(obj->Get(context, check(names->Get(context, i)))));
+      recursivelyFreeze(context, check(obj->Get(context, check(names->Get(context, i)))));
     }
 
     check(obj->SetIntegrityLevel(context, v8::IntegrityLevel::kFrozen));
@@ -687,17 +555,9 @@ v8::Local<v8::Value> deepClone(v8::Local<v8::Context> context, v8::Local<v8::Val
   return check(v8::JSON::Parse(context, serialized));
 }
 
-v8::Local<v8::Value> makeDOMException(
-    v8::Isolate* isolate,
-    v8::Local<v8::String> message,
-    kj::StringPtr name) {
-  return KJ_ASSERT_NONNULL(tryMakeDomException(isolate, message, name));
-}
-
 namespace {
 v8::MaybeLocal<v8::Value> makeRejectedPromise(
-    v8::Isolate* isolate,
-    v8::Local<v8::Value> exception) {
+    v8::Isolate* isolate, v8::Local<v8::Value> exception) {
   v8::Local<v8::Promise::Resolver> resolver;
   auto context = isolate->GetCurrentContext();
   if (!v8::Promise::Resolver::New(context).ToLocal(&resolver) ||
@@ -708,10 +568,7 @@ v8::MaybeLocal<v8::Value> makeRejectedPromise(
   return resolver->GetPromise();
 };
 
-void returnRejectedPromiseImpl(
-    auto info,
-    v8::Local<v8::Value> exception,
-    v8::TryCatch& tryCatch) {
+void returnRejectedPromiseImpl(auto info, v8::Local<v8::Value> exception, v8::TryCatch& tryCatch) {
   v8::Local<v8::Value> promise;
   if (!makeRejectedPromise(info.GetIsolate(), exception).ToLocal(&promise)) {
     // If makeRejectedPromise fails, the tryCatch should have caught the error.
@@ -722,18 +579,18 @@ void returnRejectedPromiseImpl(
 }
 }  // namespace
 
-void returnRejectedPromise(
-    const v8::FunctionCallbackInfo<v8::Value>& info,
+void returnRejectedPromise(const v8::FunctionCallbackInfo<v8::Value>& info,
     v8::Local<v8::Value> exception,
     v8::TryCatch& tryCatch) {
-  return returnRejectedPromiseImpl(info, exception, tryCatch);
+  return returnRejectedPromiseImpl<const v8::FunctionCallbackInfo<v8::Value>&>(
+      info, exception, tryCatch);
 }
 
-void returnRejectedPromise(
-    const v8::PropertyCallbackInfo<v8::Value>& info,
+void returnRejectedPromise(const v8::PropertyCallbackInfo<v8::Value>& info,
     v8::Local<v8::Value> exception,
     v8::TryCatch& tryCatch) {
-  return returnRejectedPromiseImpl(info, exception, tryCatch);
+  return returnRejectedPromiseImpl<const v8::PropertyCallbackInfo<v8::Value>&>(
+      info, exception, tryCatch);
 }
 
 // ======================================================================================
@@ -764,15 +621,21 @@ class ExternString: public Type {
   // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
   // IN THE SOFTWARE.
 
-public:
-  inline const Data* data() const override { return buf.begin(); }
+ public:
+  inline const Data* data() const override {
+    return buf.begin();
+  }
 
-  inline size_t length() const override { return buf.size(); }
+  inline size_t length() const override {
+    return buf.size();
+  }
 
-  inline uint64_t byteLength() const { return length() * sizeof(Data); }
+  inline uint64_t byteLength() const {
+    return length() * sizeof(Data);
+  }
 
-  static v8::MaybeLocal<v8::String> createExtern(v8::Isolate* isolate,
-                                                 kj::ArrayPtr<const Data>& buf) {
+  static v8::MaybeLocal<v8::String> createExtern(
+      v8::Isolate* isolate, kj::ArrayPtr<const Data>& buf) {
     if (buf.size() == 0) {
       return v8::String::Empty(isolate);
     }
@@ -802,23 +665,67 @@ public:
     return str;
   }
 
-private:
+ private:
   v8::Isolate* isolate;
   kj::ArrayPtr<const Data> buf;
 
   inline ExternString(v8::Isolate* isolate, kj::ArrayPtr<const Data>& buf)
-      : isolate(isolate), buf(buf) {}
+      : isolate(isolate),
+        buf(buf) {}
 };
 
 using ExternOneByteString = ExternString<v8::String::ExternalOneByteStringResource, char>;
 using ExternTwoByteString = ExternString<v8::String::ExternalStringResource, uint16_t>;
 
-v8::MaybeLocal<v8::String> newExternalOneByteString(Lock& js, kj::ArrayPtr<const char> buf) {
-  return ExternOneByteString::createExtern(js.v8Isolate, buf);
+v8::Local<v8::String> newExternalOneByteString(Lock& js, kj::ArrayPtr<const char> buf) {
+  return check(ExternOneByteString::createExtern(js.v8Isolate, buf));
 }
 
-v8::MaybeLocal<v8::String> newExternalTwoByteString(Lock& js, kj::ArrayPtr<const uint16_t> buf) {
-  return ExternTwoByteString::createExtern(js.v8Isolate, buf);
+v8::Local<v8::String> newExternalTwoByteString(Lock& js, kj::ArrayPtr<const uint16_t> buf) {
+  return check(ExternTwoByteString::createExtern(js.v8Isolate, buf));
+}
+
+// ======================================================================================
+// Node.js Compat
+
+namespace {
+// This list must be kept in sync with the list of builtins from Node.js.
+// It should be unlikely that anything is ever removed from this list, and
+// adding items to it is considered a semver-major change in Node.js.
+static const std::set<kj::StringPtr> NODEJS_BUILTINS{"_http_agent"_kj, "_http_client"_kj,
+  "_http_common"_kj, "_http_incoming"_kj, "_http_outgoing"_kj, "_http_server"_kj,
+  "_stream_duplex"_kj, "_stream_passthrough"_kj, "_stream_readable"_kj, "_stream_transform"_kj,
+  "_stream_wrap"_kj, "_stream_writable"_kj, "_tls_common"_kj, "_tls_wrap"_kj, "assert"_kj,
+  "assert/strict"_kj, "async_hooks"_kj, "buffer"_kj, "child_process"_kj, "cluster"_kj, "console"_kj,
+  "constants"_kj, "crypto"_kj, "dgram"_kj, "diagnostics_channel"_kj, "dns"_kj, "dns/promises"_kj,
+  "domain"_kj, "events"_kj, "fs"_kj, "fs/promises"_kj, "http"_kj, "http2"_kj, "https"_kj,
+  "inspector"_kj, "inspector/promises"_kj, "module"_kj, "net"_kj, "os"_kj, "path"_kj,
+  "path/posix"_kj, "path/win32"_kj, "perf_hooks"_kj, "process"_kj, "punycode"_kj, "querystring"_kj,
+  "readline"_kj, "readline/promises"_kj, "repl"_kj, "stream"_kj, "stream/consumers"_kj,
+  "stream/promises"_kj, "stream/web"_kj, "string_decoder"_kj, "sys"_kj, "timers"_kj,
+  "timers/promises"_kj, "tls"_kj, "trace_events"_kj, "tty"_kj, "url"_kj, "util"_kj, "util/types"_kj,
+  "v8"_kj, "vm"_kj, "wasi"_kj, "worker_threads"_kj, "zlib"_kj};
+}  // namespace
+
+kj::Maybe<kj::String> checkNodeSpecifier(kj::StringPtr specifier) {
+  // The sys module was renamed to 'util'. This shim remains to keep old programs
+  // working. `sys` is deprecated and shouldn't be used.
+  // Note to maintainers: Although this module has been deprecated for a while
+  // Node.js do not plan to remove it.
+  // See: https://github.com/nodejs/node/pull/35407#issuecomment-700693439
+  if (specifier == "sys" || specifier == "node:sys") [[unlikely]] {
+    return kj::str("node:util");
+  }
+  if (NODEJS_BUILTINS.contains(specifier)) {
+    return kj::str("node:", specifier);
+  } else if (specifier.startsWith("node:")) {
+    return kj::str(specifier);
+  }
+  return kj::none;
+}
+
+bool isNodeJsCompatEnabled(jsg::Lock& js) {
+  return IsolateBase::from(js.v8Isolate).isNodeJsCompatEnabled();
 }
 
 }  // namespace workerd::jsg

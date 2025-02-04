@@ -1,0 +1,80 @@
+load("//:build/kj_test.bzl", "kj_test")
+load("//:build/wd_cc_benchmark.bzl", "wd_cc_benchmark")
+load("//:build/wd_cc_library.bzl", "wd_cc_library")
+
+wd_cc_library(
+    name = "bench-tools",
+    hdrs = ["bench-tools.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "@capnp-cpp//src/kj:kj-test",
+        "@com_google_benchmark//:benchmark",
+    ],
+)
+
+wd_cc_library(
+    name = "test-fixture",
+    srcs = ["test-fixture.c++"],
+    hdrs = ["test-fixture.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//src/workerd/io",
+        "//src/workerd/jsg",
+        "//src/workerd/server",
+        "//src/workerd/util:autogate",
+    ],
+)
+
+kj_test(
+    src = "test-fixture-test.c++",
+    deps = [":test-fixture"],
+)
+
+# Use `bazel run //src/workerd/tests:bench-json` to benchmark
+wd_cc_benchmark(
+    name = "bench-json",
+    srcs = ["bench-json.c++"],
+    deps = [
+        "//src/workerd/api:r2-api_capnp",
+        "@capnp-cpp//src/kj",
+    ],
+)
+
+wd_cc_benchmark(
+    name = "bench-mimetype",
+    srcs = ["bench-mimetype.c++"],
+    deps = [
+        "//src/workerd/util:mimetype",
+    ],
+)
+
+wd_cc_benchmark(
+    name = "bench-kj-headers",
+    srcs = ["bench-kj-headers.c++"],
+    deps = [
+        "@capnp-cpp//src/kj/compat:kj-http",
+    ],
+)
+
+wd_cc_benchmark(
+    name = "bench-api-headers",
+    srcs = ["bench-api-headers.c++"],
+    deps = [
+        ":test-fixture",
+    ],
+)
+
+wd_cc_benchmark(
+    name = "bench-global-scope",
+    srcs = ["bench-global-scope.c++"],
+    deps = [":test-fixture"],
+)
+
+wd_cc_benchmark(
+    name = "bench-regex",
+    srcs = ["bench-regex.c++"],
+    deps = [
+        ":test-fixture",
+        "//src/workerd/util",
+    ],
+)

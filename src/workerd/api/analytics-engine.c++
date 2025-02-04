@@ -3,13 +3,14 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 #include "analytics-engine.h"
-#include <capnp/serialize-text.h>
+
+#include <workerd/api/analytics-engine.capnp.h>
 #include <workerd/io/io-context.h>
 
 namespace workerd::api {
 
-void AnalyticsEngine::writeDataPoint(jsg::Lock& js,
-    jsg::Optional<api::AnalyticsEngine::AnalyticsEngineEvent> event) {
+void AnalyticsEngine::writeDataPoint(
+    jsg::Lock& js, jsg::Optional<api::AnalyticsEngine::AnalyticsEngineEvent> event) {
   auto& context = IoContext::current();
 
   context.getLimitEnforcer().newAnalyticsEngineRequest();
@@ -26,15 +27,15 @@ void AnalyticsEngine::writeDataPoint(jsg::Lock& js,
     aeEvent.setIndex1(""_kj.asBytes());
 
     kj::StringPtr errorPrefix = "writeDataPoint(): "_kj;
-    KJ_IF_MAYBE(ev, event) {
-      KJ_IF_MAYBE(indexes, ev->indexes) {
-        setIndexes<api::AnalyticsEngineEvent::Builder>(aeEvent, *indexes, errorPrefix);
+    KJ_IF_SOME(ev, event) {
+      KJ_IF_SOME(indexes, ev.indexes) {
+        setIndexes<api::AnalyticsEngineEvent::Builder>(aeEvent, indexes, errorPrefix);
       }
-      KJ_IF_MAYBE(blobs, ev->blobs) {
-        setBlobs<api::AnalyticsEngineEvent::Builder>(aeEvent, *blobs, errorPrefix);
+      KJ_IF_SOME(blobs, ev.blobs) {
+        setBlobs<api::AnalyticsEngineEvent::Builder>(aeEvent, blobs, errorPrefix);
       }
-      KJ_IF_MAYBE(doubles, ev->doubles) {
-        setDoubles<api::AnalyticsEngineEvent::Builder>(aeEvent, *doubles, errorPrefix);
+      KJ_IF_SOME(doubles, ev.doubles) {
+        setDoubles<api::AnalyticsEngineEvent::Builder>(aeEvent, doubles, errorPrefix);
       }
     }
   });

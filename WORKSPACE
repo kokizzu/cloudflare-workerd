@@ -1,62 +1,122 @@
 workspace(name = "workerd")
 
+load("@//build/deps:gen/build_deps.bzl", build_deps_gen = "deps_gen")
+
+build_deps_gen()
+
+load("@//build/deps:gen/deps.bzl", "deps_gen")
+
+deps_gen()
+
 # ========================================================================================
 # Bazel basics
 
+load("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository")
 load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive", "http_file")
-load("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository", "new_git_repository")
 
-http_archive(
-    name = "bazel_skylib",
-    sha256 = "f7be3474d42aae265405a592bb7da8e171919d74c16f082a5457840f06054728",
-    urls = [
-        "https://mirror.bazel.build/github.com/bazelbuild/bazel-skylib/releases/download/1.2.1/bazel-skylib-1.2.1.tar.gz",
-        "https://github.com/bazelbuild/bazel-skylib/releases/download/1.2.1/bazel-skylib-1.2.1.tar.gz",
-    ],
-)
+NODE_VERSION = "22.11.0"
 
 load("@bazel_skylib//:workspace.bzl", "bazel_skylib_workspace")
 
 bazel_skylib_workspace()
 
-http_archive(
-    name = "rules_foreign_cc",
-    sha256 = "6041f1374ff32ba711564374ad8e007aef77f71561a7ce784123b9b4b88614fc",
-    strip_prefix = "rules_foreign_cc-0.8.0",
-    url = "https://github.com/bazelbuild/rules_foreign_cc/archive/0.8.0.tar.gz",
+load(
+    "@build_bazel_apple_support//lib:repositories.bzl",
+    "apple_support_dependencies",
 )
 
-load("@rules_foreign_cc//foreign_cc:repositories.bzl", "rules_foreign_cc_dependencies")
+apple_support_dependencies()
 
-rules_foreign_cc_dependencies()
+# apple_support now requires bazel_features, pull in its dependencies too.
+load("@bazel_features//:deps.bzl", "bazel_features_deps")
+
+bazel_features_deps()
 
 # ========================================================================================
 # Simple dependencies
 
 http_archive(
-    name = "capnp-cpp",
-    sha256 = "6037161854236833194a46ad131278630e1a9429809da2ee1fc1d8432296fc3f",
-    strip_prefix = "capnproto-capnproto-ea883a4/c++",
-    type = "tgz",
-    urls = ["https://github.com/capnproto/capnproto/tarball/ea883a4bd89213cc49b7b1707fddd88af2a2b0c2"],
+    name = "sqlite3",
+    build_file = "//:build/BUILD.sqlite3",
+    patch_args = ["-p1"],
+    patches = [
+        "//:patches/sqlite/0001-row-counts-plain.patch",
+        "//:patches/sqlite/0002-macOS-missing-PATH-fix.patch",
+        "//:patches/sqlite/0003-sqlite-complete-early-exit.patch",
+    ],
+    sha256 = "f59c349bedb470203586a6b6d10adb35f2afefa49f91e55a672a36a09a8fedf7",
+    strip_prefix = "sqlite-src-3470000",
+    url = "https://sqlite.org/2024/sqlite-src-3470000.zip",
+)
+
+load("@rules_python//python:repositories.bzl", "py_repositories", "python_register_toolchains")
+
+py_repositories()
+
+http_archive(
+    name = "com_google_benchmark",
+    integrity = "sha256-a8GApX0j1NlRVRn5KwyD1hsFtbqxiJYfNqx7BrDZ6c4=",
+    strip_prefix = "benchmark-1.8.3",
+    url = "https://github.com/google/benchmark/archive/refs/tags/v1.8.3.tar.gz",
+)
+
+# These are part of what's needed to get `bazel query 'deps(//...)'`, to work, but this is difficult to support
+# based on our dependencies – just use cquery instead.
+# load("@com_google_benchmark//:bazel/benchmark_deps.bzl", "benchmark_deps")
+# benchmark_deps()
+
+http_archive(
+    name = "brotli",
+    sha256 = "e720a6ca29428b803f4ad165371771f5398faba397edf6778837a18599ea13ff",
+    strip_prefix = "brotli-1.1.0",
+    urls = ["https://github.com/google/brotli/archive/refs/tags/v1.1.0.tar.gz"],
 )
 
 http_archive(
-    name = "ssl",
-    sha256 = "873ec711658f65192e9c58554ce058d1cfa4e57e13ab5366ee16f76d1c757efc",
-    strip_prefix = "google-boringssl-ed2e74e",
-    type = "tgz",
-    # from master-with-bazel branch
-    urls = ["https://github.com/google/boringssl/tarball/ed2e74e737dc802ed9baad1af62c1514430a70d6"],
+    name = "nbytes",
+    build_file = "//:build/BUILD.nbytes",
+    sha256 = "34be48071c86add2f8d14fd4a238c47230965fd743a51b8a1dd0b2f0210f0171",
+    strip_prefix = "nbytes-0.1.1",
+    url = "https://github.com/nodejs/nbytes/archive/refs/tags/v0.1.1.tar.gz",
 )
 
 http_archive(
-    name = "com_cloudflare_lol_html",
-    url = "https://github.com/cloudflare/lol-html/tarball/1b64a2ed0d719ce5dfac316108ca2dfad73ff9b4",
-    strip_prefix = "cloudflare-lol-html-1b64a2e",
-    type = "tgz",
-    sha256 = "9648017d74fbb2ab8418efe12e7baff0c0acd4b97f9a0023b562f3a3744b6d7b",
-    build_file = "//:build/BUILD.lol-html",
+    name = "pyodide",
+    build_file = "//:build/BUILD.pyodide",
+    sha256 = "fbda450a64093a8d246c872bb901ee172a57fe594c9f35bba61f36807c73300d",
+    urls = ["https://github.com/pyodide/pyodide/releases/download/0.26.0a2/pyodide-core-0.26.0a2.tar.bz2"],
+)
+
+http_archive(
+    name = "pyodide_packages",
+    build_file = "//:build/BUILD.pyodide_packages",
+    sha256 = "c4a4e0c1cb658a39abc0435cc07df902e5a2ecffc091e0528b96b0c295e309ea",
+    urls = ["https://github.com/dom96/pyodide_packages/releases/download/just-stdlib/pyodide_packages.tar.zip"],
+)
+
+load("//:build/pyodide_bucket.bzl", "PYODIDE_ALL_WHEELS_ZIP_SHA256", "PYODIDE_GITHUB_RELEASE_URL")
+load("//:build/python_metadata.bzl", "PYTHON_LOCKFILES")
+
+[
+    http_file(
+        name = "pyodide-lock_" + package_date + ".json",
+        sha256 = package_lock_sha,
+        url = "https://github.com/cloudflare/pyodide-build-scripts/releases/download/" + package_date + "/pyodide-lock.json",
+    )
+    for package_date, package_lock_sha in PYTHON_LOCKFILES.items()
+]
+
+http_archive(
+    name = "all_pyodide_wheels",
+    build_file_content = """
+filegroup(
+    name = "whls",
+    srcs = glob(["*"]),
+    visibility = ["//visibility:public"]
+)
+    """,
+    sha256 = PYODIDE_ALL_WHEELS_ZIP_SHA256,
+    urls = [PYODIDE_GITHUB_RELEASE_URL + "all_wheels.zip"],
 )
 
 # ========================================================================================
@@ -64,91 +124,72 @@ http_archive(
 
 # tcmalloc requires Abseil.
 #
-# WARNING: This MUST appear before rules_fuzzing_depnedencies(), below. Otherwise,
-#   rules_fuzzing_depnedencies() will choose to pull in a different version of Abseil that is too
-#   old for tcmalloc. Absurdly, Bazel simply ignores later attempts to define the same repo name,
-#   rather than erroring out. Thus this leads to confusing compiler errors in tcmalloc complaining
-#   that ABSL_ATTRIBUTE_PURE_FUNCTION is not defined.
-http_archive(
+git_repository(
     name = "com_google_absl",
-    urls = ["https://github.com/abseil/abseil-cpp/archive/b3162b1da62711c663d0025e2eabeb83fd1f2728.zip"],
-    strip_prefix = "abseil-cpp-b3162b1da62711c663d0025e2eabeb83fd1f2728",
-    sha256 = "d5c91248c33269fcc7ab35897315a45cfa2c37abb4c6d4ed36cb5c82f366367a",
+    commit = "72093794ac42be8105817ae0b0569fb411a6ca9b",
+    remote = "https://chromium.googlesource.com/chromium/src/third_party/abseil-cpp.git",
 )
 
-# tcmalloc requires this "rules_fuzzing" package. Its build files fail analysis without it, even
-# though it is unused for our purposes.
-http_archive(
-    name = "rules_fuzzing",
-    sha256 = "a5734cb42b1b69395c57e0bbd32ade394d5c3d6afbfe782b24816a96da24660d",
-    strip_prefix = "rules_fuzzing-0.1.1",
-    urls = ["https://github.com/bazelbuild/rules_fuzzing/archive/v0.1.1.zip"],
+git_repository(
+    name = "fast_float",
+    build_file_content = "exports_files(glob([\"**\"]))",
+    commit = "d7417618f93d2c47e9bbde561510f9fc8bafe003",
+    remote = "https://chromium.googlesource.com/external/github.com/fastfloat/fast_float.git",
 )
 
-load("@rules_fuzzing//fuzzing:repositories.bzl", "rules_fuzzing_dependencies")
+git_repository(
+    name = "fp16",
+    build_file_content = "exports_files(glob([\"**\"]))",
+    commit = "0a92994d729ff76a58f692d3028ca1b64b145d91",
+    remote = "https://chromium.googlesource.com/external/github.com/Maratyszcza/FP16.git",
+)
 
-rules_fuzzing_dependencies()
+git_repository(
+    name = "highway",
+    commit = "00fe003dac355b979f36157f9407c7c46448958e",
+    remote = "https://chromium.googlesource.com/external/github.com/google/highway.git",
+)
 
-load("@rules_fuzzing//fuzzing:init.bzl", "rules_fuzzing_init")
+# Bindings for Highway library used by V8
+bind(
+    name = "hwy",
+    actual = "@highway//:hwy",
+)
 
-rules_fuzzing_init()
+# Bindings for abseil libraries used by V8
+[
+    bind(
+        name = "absl_" + absl_component,
+        actual = "@com_google_absl//absl/container:" + absl_component,
+    )
+    for absl_component in [
+        "btree",
+        "flat_hash_map",
+        "flat_hash_set",
+    ]
+]
 
 # OK, now we can bring in tcmalloc itself.
 http_archive(
     name = "com_google_tcmalloc",
-    url = "https://github.com/google/tcmalloc/tarball/ca82471188f4832e82d2e77078ecad66f4c425d5",
-    strip_prefix = "google-tcmalloc-ca82471",
+    sha256 = "81f285cb337f445276f37c308cb90120f8ba4311d1be9daf3b93dccf4bfdba7d",
+    strip_prefix = "google-tcmalloc-69c409c",
     type = "tgz",
-    sha256 = "10b1217154c2b432241ded580d6b0e0b01f5d2566b4eeacf2edf937b87683274",
+    url = "https://github.com/google/tcmalloc/tarball/69c409c344bdf894fc7aab83e2d9e280b009b2f3",
 )
 
 # ========================================================================================
 # Rust bootstrap
 #
-# workerd uses some Rust libraries, especially lolhtml for implementing HtmlRewriter.
 
-http_file(
-    name = "cargo_bazel_linux_x64",
-    executable = True,
-    sha256 = "a9f81a6fd356fc01e3da2483bdd1f9dfb080b0bdf5a128fa036c048e5b301562",
-    urls = [
-        "https://github.com/bazelbuild/rules_rust/releases/download/0.10.0/cargo-bazel-x86_64-unknown-linux-gnu",
-    ],
-)
-
-http_file(
-    name = "cargo_bazel_linux_arm64",
-    executable = True,
-    sha256 = "f2d168c386d38c0d5ca429c34dcbc5a6aec5be19ee1d4f6f0e614293b0e55468",
-    urls = [
-        "https://github.com/bazelbuild/rules_rust/releases/download/0.10.0/cargo-bazel-aarch64-unknown-linux-gnu",
-    ],
-)
-
-http_file(
-    name = "cargo_bazel_macos_x64",
-    executable = True,
-    sha256 = "fb80acb9fcfd83674f73e98bf956bc65b33f31a4380ba72fbc1a6a9bf22c2f8c",
-    urls = [
-        "https://github.com/bazelbuild/rules_rust/releases/download/0.10.0/cargo-bazel-x86_64-apple-darwin",
-    ],
-)
-
-http_file(
-    name = "cargo_bazel_macos_arm64",
-    executable = True,
-    sha256 = "4104ea8edd3fccbcfc43265e4fa02dfc25b12b32250ff46456b829ab9cb78908",
-    urls = [
-        "https://github.com/bazelbuild/rules_rust/releases/download/0.10.0/cargo-bazel-aarch64-apple-darwin",
-    ],
-)
-
-http_archive(
-    name = "rules_rust",
-    sha256 = "0cc7e6b39e492710b819e00d48f2210ae626b717a3ab96e048c43ab57e61d204",
-    urls = [
-        "https://github.com/bazelbuild/rules_rust/releases/download/0.10.0/rules_rust-v0.10.0.tar.gz",
-    ],
+git_repository(
+    name = "zlib",
+    build_file = "//:build/BUILD.zlib",
+    # This should match the version specified in V8 DEPS, but in practice it is generally acceptable
+    # for it to be behind – zlib is very stable and its API has not changed in a long time, most
+    # changes to the Chromium fork affect ancillary tools and not the zlib library itself.
+    commit = "82a5fecf8aae8f288267cfdb2d29c9ebf7b37e59",
+    remote = "https://chromium.googlesource.com/chromium/src/third_party/zlib.git",
 )
 
 load("@rules_rust//rust:repositories.bzl", "rules_rust_dependencies", "rust_register_toolchains")
@@ -156,21 +197,26 @@ load("@rules_rust//rust:repositories.bzl", "rules_rust_dependencies", "rust_regi
 rules_rust_dependencies()
 
 rust_register_toolchains(
-    edition = "2018",
-    version = "1.66.0",
+    edition = "2021",
+    extra_target_triples = [
+        # Add support for macOS cross-compilation
+        "x86_64-apple-darwin",
+        # Add support for macOS rosetta
+        "aarch64-unknown-linux-gnu",
+    ],
+    versions = ["1.83.0"],  # LLVM 19
 )
 
 load("@rules_rust//crate_universe:repositories.bzl", "crate_universe_dependencies")
 
 crate_universe_dependencies()
 
-load("//rust-deps/crates:crates.bzl", "crate_repositories")
+# Load rust crate dependencies.
+# These could be regenerated from cargo.bzl by using
+# `just update-rust` (consult `just --list` or justfile for more details)
+load("//deps/rust/crates:crates.bzl", "crate_repositories")
 
 crate_repositories()
-
-load("//rust-deps/cxxbridge_crates:crates.bzl", cxxbridge_repositories = "crate_repositories")
-
-cxxbridge_repositories()
 
 load("@rules_rust//tools/rust_analyzer:deps.bzl", "rust_analyzer_dependencies")
 
@@ -181,126 +227,93 @@ rust_analyzer_dependencies()
 #
 # workerd uses Node.js scripts for generating TypeScript types.
 
-http_archive(
-    name = "aspect_rules_js",
-    sha256 = "686d5b345592c1958b4aea24049d935ada11b83ae5538658d22b84b353cfbb1e",
-    strip_prefix = "rules_js-1.13.1",
-    url = "https://github.com/aspect-build/rules_js/archive/refs/tags/v1.13.1.tar.gz",
-)
-
-http_archive(
-    name = "aspect_rules_ts",
-    sha256 = "6406905c5f7c5ca6dedcca5dacbffbf32bb2a5deb77f50da73e7195b2b7e8cbc",
-    strip_prefix = "rules_ts-1.0.5",
-    url = "https://github.com/aspect-build/rules_ts/archive/refs/tags/v1.0.5.tar.gz",
-)
-
 load("@aspect_rules_js//js:repositories.bzl", "rules_js_dependencies")
 
 rules_js_dependencies()
 
-load("@rules_nodejs//nodejs:repositories.bzl", "nodejs_register_toolchains")
+load("@aspect_rules_js//js:toolchains.bzl", "rules_js_register_toolchains")
 
-nodejs_register_toolchains(
-    name = "nodejs",
-    node_version = "18.10.0",
+rules_js_register_toolchains(
+    node_urls = [
+        # github workflows may substitute a mirror URL here to avoid fetch failures.
+        # "WORKERS_MIRROR_URL/https://nodejs.org/dist/v{version}/{filename}",
+        "https://nodejs.org/dist/v{version}/{filename}",
+    ],
+    node_version = NODE_VERSION,
 )
 
-load("@aspect_rules_ts//ts:repositories.bzl", TS_LATEST_VERSION = "LATEST_VERSION", "rules_ts_dependencies")
+load("@aspect_rules_ts//ts:repositories.bzl", "rules_ts_dependencies")
 
-rules_ts_dependencies(ts_version = TS_LATEST_VERSION)
+rules_ts_dependencies(ts_version_from = "//:package.json")
 
-load("@aspect_rules_js//npm:npm_import.bzl", "npm_translate_lock")
+load("@aspect_rules_js//npm:repositories.bzl", "npm_translate_lock")
 
 npm_translate_lock(
     name = "npm",
-    pnpm_lock = "//:pnpm-lock.yaml",
+    npmrc = "//:.npmrc",
+    patch_args = {
+        "capnp-ts@0.7.0": ["-p1"],
+    },
     # Patches required for `capnp-ts` to type-check
     patches = {
         "capnp-ts@0.7.0": ["//:patches/capnp-ts@0.7.0.patch"],
     },
-    patch_args = {
-        "capnp-ts@0.7.0": ["-p1"],
-    },
+    pnpm_lock = "//:pnpm-lock.yaml",
 )
 
 load("@npm//:repositories.bzl", "npm_repositories")
 
 npm_repositories()
 
-# ========================================================================================
-# V8 and its dependencies
-#
-# Note that googlesource does not generate tarballs deterministically, so we cannot use
-# http_archive: https://github.com/google/gitiles/issues/84
-#
-# It would seem that googlesource would rather we use git protocol (ideally with shallow clones).
-# Fine, we can do that.
-#
-# Note that while there is an official mirror of V8 on GitHub, there do not appear to be
-# mirrors of the dependencies: zlib (Chromium fork), icu (Chromium fork), and trace_event. So
-# fetching from GitHub instead wouldn't really solve the problem.
+load("@aspect_rules_esbuild//esbuild:dependencies.bzl", "rules_esbuild_dependencies")
 
-git_repository(
-    name = "v8",
-    remote = "https://chromium.googlesource.com/v8/v8.git",
-    commit = "18865d6af0404f2d2aeb1c99dd73503364ce0967",
-    shallow_since = "1662649276 +0000",
-    patch_args = [ "-p1" ],
-    patches = [
-        "//:patches/v8/0001-Allow-manually-setting-ValueDeserializer-format-vers.patch",
-        "//:patches/v8/0002-Allow-manually-setting-ValueSerializer-format-versio.patch",
-        "//:patches/v8/0003-Make-icudata-target-public.patch",
-        "//:patches/v8/0004-Add-ArrayBuffer-MaybeNew.patch",
-        "//:patches/v8/0005-Revert-bazel-Add-hide-symbols-from-release-fast-buil.patch",
-    ],
+rules_esbuild_dependencies()
+
+load("@aspect_rules_esbuild//esbuild:repositories.bzl", "LATEST_ESBUILD_VERSION", "esbuild_register_toolchains")
+
+esbuild_register_toolchains(
+    name = "esbuild",
+    esbuild_version = LATEST_ESBUILD_VERSION,
 )
 
-new_git_repository(
-    name = "com_googlesource_chromium_icu",
-    remote = "https://chromium.googlesource.com/chromium/deps/icu.git",
-    commit = "20f8ac695af59b6c830def7d4e95bfeb13dd7be5",
-    shallow_since = "1660168635 +0000",
-    build_file = "@v8//:bazel/BUILD.icu",
-    patch_cmds = [ "find source -name BUILD.bazel | xargs rm" ]
+load("@//build/deps:v8.bzl", "deps_v8")
+
+deps_v8()
+
+python_register_toolchains(
+    name = "python3_13",
+    ignore_root_user_error = True,
+    # https://github.com/bazelbuild/rules_python/blob/main/python/versions.bzl
+    python_version = "3.13",
 )
 
-new_git_repository(
-    name = "com_googlesource_chromium_base_trace_event_common",
-    remote = "https://chromium.googlesource.com/chromium/src/base/trace_event/common.git",
-    commit = "521ac34ebd795939c7e16b37d9d3ddb40e8ed556",
-    shallow_since = "1659619139 -0700",
-    build_file = "@v8//:bazel/BUILD.trace_event_common",
-)
+load("@python3_13//:defs.bzl", "interpreter")
+load("@rules_python//python:pip.bzl", "pip_parse")
 
-http_archive(
-    name = "rules_python",
-    sha256 = "a30abdfc7126d497a7698c29c46ea9901c6392d6ed315171a6df5ce433aa4502",
-    strip_prefix = "rules_python-0.6.0",
-    url = "https://github.com/bazelbuild/rules_python/archive/0.6.0.tar.gz",
-)
-
-load("@rules_python//python:pip.bzl", "pip_install")
-
-pip_install(
+pip_parse(
     name = "v8_python_deps",
     extra_pip_args = ["--require-hashes"],
-    requirements = "@v8//:bazel/requirements.txt",
+    python_interpreter_target = interpreter,
+    requirements_lock = "@v8//:bazel/requirements.txt",
 )
 
-bind(
-    name = "zlib_compression_utils",
-    actual = "@com_googlesource_chromium_zlib//:zlib_compression_utils",
+load("@v8_python_deps//:requirements.bzl", v8_python_deps_install = "install_deps")
+
+v8_python_deps_install()
+
+pip_parse(
+    name = "py_deps",
+    python_interpreter_target = interpreter,
+    requirements_lock = "//build/deps:requirements.txt",
 )
+
+load("@py_deps//:requirements.bzl", py_deps_install = "install_deps")
+
+py_deps_install()
 
 bind(
     name = "icu",
     actual = "@com_googlesource_chromium_icu//:icu",
-)
-
-bind(
-    name = "base_trace_event_common",
-    actual = "@com_googlesource_chromium_base_trace_event_common//:trace_event_common",
 )
 
 # Tell workerd code where to find v8.
@@ -308,27 +321,22 @@ bind(
 # We indirect through `@workerd-v8` to allow dependents to override how and where `v8` is built.
 #
 # TODO(cleanup): There must be a better way to do this?
+# TODO(soon): Figure out how to build v8 with perfetto enabled. It does not appear
+#             as if the v8 bazel build currently includes support for building with
+#             perfetto enabled as an option.
 new_local_repository(
     name = "workerd-v8",
     build_file_content = """cc_library(
         name = "v8",
-        deps = ["@v8//:v8_icu", "@workerd//:icudata-embed"],
+        deps = [ "@v8//:v8_icu", "@workerd//:icudata-embed" ],
         visibility = ["//visibility:public"])""",
     path = "empty",
 )
 
-# ========================================================================================
-# Tools
-
-# Hedron's Compile Commands Extractor for Bazel
-# https://github.com/hedronvision/bazel-compile-commands-extractor
-http_archive(
-    name = "hedron_compile_commands",
-    sha256 = "ab6c6b4ceaf12b224e571ec075fd79086c52c3430993140bb2ed585b08dfc552",
-    strip_prefix = "bazel-compile-commands-extractor-d1e95ec162e050b04d0a191826f9bc478de639f7",
-    url = "https://github.com/hedronvision/bazel-compile-commands-extractor/archive/d1e95ec162e050b04d0a191826f9bc478de639f7.tar.gz",
+# rust-based lolhtml dependency, including the API header.
+# Presented as a separate repository to allow overrides.
+new_local_repository(
+    name = "com_cloudflare_lol_html",
+    build_file = "@workerd//deps/rust:BUILD.lolhtml",
+    path = "empty",
 )
-
-load("@hedron_compile_commands//:workspace_setup.bzl", "hedron_compile_commands_setup")
-
-hedron_compile_commands_setup()

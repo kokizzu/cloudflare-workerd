@@ -1,3 +1,7 @@
+// Copyright (c) 2022-2023 Cloudflare, Inc.
+// Licensed under the Apache 2.0 license found in the LICENSE file or at:
+//     https://opensource.org/licenses/Apache-2.0
+
 import assert from "assert";
 import { test } from "node:test";
 import ts, { factory as f } from "typescript";
@@ -24,7 +28,6 @@ test("printNode: prints interface", () => {
     f.createTypeReferenceNode("string")
   );
   const declaration = f.createInterfaceDeclaration(
-    /* decorators */ undefined,
     [f.createToken(ts.SyntaxKind.ExportKeyword)],
     "Test",
     [typeParam],
@@ -42,7 +45,6 @@ test("printNode: prints interface", () => {
 
 test("printNodeList: prints statements", () => {
   const interfaceDeclaration = f.createInterfaceDeclaration(
-    /* decorators */ undefined,
     /* modifiers */ undefined,
     "Interface",
     /* typeParams */ undefined,
@@ -50,7 +52,6 @@ test("printNodeList: prints statements", () => {
     []
   );
   const classDeclaration = f.createClassDeclaration(
-    /* decorators */ undefined,
     /* modifiers */ undefined,
     "Class",
     /* typeParams */ undefined,

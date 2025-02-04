@@ -4,12 +4,15 @@
 
 #include "jsg-test.h"
 
+#include <workerd/jsg/resource-test.capnp.h>
+
 namespace workerd::jsg::test {
 namespace {
 
 V8System v8System;
+class ContextGlobalObject: public Object, public ContextGlobal {};
 
-struct BoxContext: public Object {
+struct BoxContext: public ContextGlobalObject {
   JSG_RESOURCE_TYPE(BoxContext) {
     JSG_NESTED_TYPE(NumberBox);
     JSG_NESTED_TYPE(BoxBox);
@@ -22,60 +25,62 @@ KJ_TEST("constructors and properties") {
   e.expectEval("new NumberBox(123).value", "number", "123");
   e.expectEval("new NumberBox(123).boxed.value", "number", "123");
   e.expectEval("new BoxBox(new NumberBox(123), 321).inner.value", "number", "444");
-  e.expectEval(
-      "var n = new NumberBox(123);\n"
-      "n.value = 321;\n"
-      "n.getValue()", "number", "321");
-  e.expectEval(
-      "var n = new NumberBox(123);\n"
-      "n.boxed = new NumberBox(321);\n"
-      "n.getValue()", "number", "321");
+  e.expectEval("var n = new NumberBox(123);\n"
+               "n.value = 321;\n"
+               "n.getValue()",
+      "number", "321");
+  e.expectEval("var n = new NumberBox(123);\n"
+               "n.boxed = new NumberBox(321);\n"
+               "n.getValue()",
+      "number", "321");
   e.expectEval("new NumberBox(123) instanceof NumberBox", "boolean", "true");
   e.expectEval("new NumberBox(123) instanceof BoxBox", "boolean", "false");
 }
 
 KJ_TEST("methods") {
   Evaluator<BoxContext, BoxIsolate> e(v8System);
-  e.expectEval(
-      "var n = new NumberBox(123);\n"
-      "n.increment();\n"
-      "n.getValue()", "number", "124");
+  e.expectEval("var n = new NumberBox(123);\n"
+               "n.increment();\n"
+               "n.getValue()",
+      "number", "124");
 
-  e.expectEval(
-      "var n = new NumberBox(123);\n"
-      "n.incrementBy(321);\n"
-      "n.getValue()", "number", "444");
+  e.expectEval("var n = new NumberBox(123);\n"
+               "n.incrementBy(321);\n"
+               "n.getValue()",
+      "number", "444");
 
-  e.expectEval(
-      "var n = new NumberBox(123);\n"
-      "n.incrementByBox(new NumberBox(321));\n"
-      "n.getValue()", "number", "444");
+  e.expectEval("var n = new NumberBox(123);\n"
+               "n.incrementByBox(new NumberBox(321));\n"
+               "n.getValue()",
+      "number", "444");
 
-  e.expectEval(
-      "var n = new NumberBox(123);\n"
-      "n.add(321)", "number", "444");
+  e.expectEval("var n = new NumberBox(123);\n"
+               "n.add(321)",
+      "number", "444");
 
-  e.expectEval(
-      "var n = new NumberBox(123);\n"
-      "n.addBox(new NumberBox(321))", "number", "444");
+  e.expectEval("var n = new NumberBox(123);\n"
+               "n.addBox(new NumberBox(321))",
+      "number", "444");
 
-  e.expectEval(
-      "var n = new NumberBox(123);\n"
-      "n.addReturnBox(321).value", "number", "444");
+  e.expectEval("var n = new NumberBox(123);\n"
+               "n.addReturnBox(321).value",
+      "number", "444");
 
-  e.expectEval(
-      "var n = new NumberBox(123);\n"
-      "n.addMultiple(new NumberBox(321), 111, new NumberBox(2222))", "number", "2777");
+  e.expectEval("var n = new NumberBox(123);\n"
+               "n.addMultiple(new NumberBox(321), 111, new NumberBox(2222))",
+      "number", "2777");
 
-  e.expectEval(
-      "var n = new NumberBox(123);\n"
-      "new n.increment();", "throws", "TypeError: n.increment is not a constructor");
+  e.expectEval("var n = new NumberBox(123);\n"
+               "new n.increment();",
+      "throws", "TypeError: n.increment is not a constructor");
 }
 
 // ========================================================================================
 
 struct Mixin {
-  int getValue() { return i; }
+  int getValue() {
+    return i;
+  }
   Mixin(int i): i(i) {}
   int i;
 };
@@ -86,7 +91,7 @@ struct InheritsMixin: public Object, public Mixin {
     JSG_METHOD(getValue);
   }
 };
-struct InheritsMixinContext: public Object {
+struct InheritsMixinContext: public ContextGlobalObject {
   Ref<InheritsMixin> makeInheritsMixin(int i) {
     return jsg::alloc<InheritsMixin>(i);
   }
@@ -99,8 +104,7 @@ JSG_DECLARE_ISOLATE_TYPE(InheritsMixinIsolate, InheritsMixinContext, InheritsMix
 
 KJ_TEST("JSG_METHODs can be implemented by mixins") {
   Evaluator<InheritsMixinContext, InheritsMixinIsolate> e(v8System);
-  e.expectEval(
-      "makeInheritsMixin(12345).getValue()", "number", "12345");
+  e.expectEval("makeInheritsMixin(12345).getValue()", "number", "12345");
 }
 
 // ========================================================================================
@@ -114,19 +118,27 @@ struct PrototypePropertyObject: public Object {
     return alloc<PrototypePropertyObject>(value);
   }
 
-  double getValue() { return value; }
-  void setValue(double v) { value = v; }
+  double getValue() {
+    return value;
+  }
+  void setValue(double v) {
+    value = v;
+  }
 
   JSG_RESOURCE_TYPE(PrototypePropertyObject) {
     JSG_PROTOTYPE_PROPERTY(value, getValue, setValue);
   }
 };
 
-struct PropContext: public Object {
+struct PropContext: public ContextGlobalObject {
   PropContext(): contextProperty(kj::str("default-context-property-value")) {}
 
-  kj::StringPtr getContextProperty() { return contextProperty; }
-  void setContextProperty(kj::String s) { contextProperty = kj::mv(s); }
+  kj::StringPtr getContextProperty() {
+    return contextProperty;
+  }
+  void setContextProperty(kj::String s) {
+    contextProperty = kj::mv(s);
+  }
 
   JSG_RESOURCE_TYPE(PropContext) {
     JSG_METHOD(getContextProperty);
@@ -136,61 +148,55 @@ struct PropContext: public Object {
     JSG_NESTED_TYPE(PrototypePropertyObject);
   }
 
-private:
+ private:
   kj::String contextProperty;
 };
 JSG_DECLARE_ISOLATE_TYPE(PropIsolate, PropContext, PrototypePropertyObject);
 
+const auto kIllegalInvocation =
+    "TypeError: Illegal invocation: function called with incorrect `this` reference. "
+    "See https://developers.cloudflare.com/workers/observability/errors/#illegal-invocation-errors for details."_kj;
+
 KJ_TEST("context methods and properties") {
   Evaluator<PropContext, PropIsolate> e(v8System);
-  e.expectEval(
-      "getContextProperty()", "string", "default-context-property-value");
-  e.expectEval(
-      "setContextProperty('foo');\n"
-      "getContextProperty()", "string", "foo");
+  e.expectEval("getContextProperty()", "string", "default-context-property-value");
+  e.expectEval("setContextProperty('foo');\n"
+               "getContextProperty()",
+      "string", "foo");
 
-  e.expectEval(
-      "contextProperty", "string", "default-context-property-value");
-  e.expectEval(
-      "contextProperty = 'foo'; getContextProperty()", "string", "foo");
+  e.expectEval("contextProperty", "string", "default-context-property-value");
+  e.expectEval("contextProperty = 'foo'; getContextProperty()", "string", "foo");
 
-  e.expectEval(
-      "this.getContextProperty()", "string", "default-context-property-value");
-  e.expectEval(
-      "this.setContextProperty('foo');\n"
-      "getContextProperty()", "string", "foo");
+  e.expectEval("this.getContextProperty()", "string", "default-context-property-value");
+  e.expectEval("this.setContextProperty('foo');\n"
+               "getContextProperty()",
+      "string", "foo");
 
-  e.expectEval(
-      "this.contextProperty", "string", "default-context-property-value");
-  e.expectEval(
-      "this.contextProperty = 'foo'; getContextProperty()", "string", "foo");
+  e.expectEval("this.contextProperty", "string", "default-context-property-value");
+  e.expectEval("this.contextProperty = 'foo'; getContextProperty()", "string", "foo");
 
-  e.expectEval(
-      "let p = new PrototypePropertyObject(123);\n"
-      "let o = {};\n"
-      "o.__proto__ = p.__proto__;\n"
-      "o.value",
-      "throws",
-      "TypeError: Illegal invocation");
-  e.expectEval(
-      "let p = new PrototypePropertyObject(123);\n"
-      "let o = {};\n"
-      "o.__proto__ = p.__proto__;\n"
-      "o.value = 123",
-      "throws",
-      "TypeError: Illegal invocation");
+  e.expectEval("let p = new PrototypePropertyObject(123);\n"
+               "let o = {};\n"
+               "o.__proto__ = p.__proto__;\n"
+               "o.value",
+      "throws", kIllegalInvocation);
+  e.expectEval("let p = new PrototypePropertyObject(123);\n"
+               "let o = {};\n"
+               "o.__proto__ = p.__proto__;\n"
+               "o.value = 123",
+      "throws", kIllegalInvocation);
 
-  e.expectEval(
-      "class P2 extends PrototypePropertyObject {\n"
-      "  constructor(v) { super(v); }\n"
-      "}\n"
-      "let p = new P2(123);\n"
-      "p.value", "number", "123");
+  e.expectEval("class P2 extends PrototypePropertyObject {\n"
+               "  constructor(v) { super(v); }\n"
+               "}\n"
+               "let p = new P2(123);\n"
+               "p.value",
+      "number", "123");
 }
 
 // ========================================================================================
 
-struct NonConstructibleContext: public Object {
+struct NonConstructibleContext: public ContextGlobalObject {
   struct NonConstructible: public Object {
     NonConstructible(double x): x(x) {}
 
@@ -214,33 +220,29 @@ struct NonConstructibleContext: public Object {
     JSG_METHOD(getNonConstructible);
   }
 };
-JSG_DECLARE_ISOLATE_TYPE(NonConstructibleIsolate, NonConstructibleContext,
-    NonConstructibleContext::NonConstructible);
+JSG_DECLARE_ISOLATE_TYPE(
+    NonConstructibleIsolate, NonConstructibleContext, NonConstructibleContext::NonConstructible);
 
 KJ_TEST("non-constructible types can't be constructed") {
   Evaluator<NonConstructibleContext, NonConstructibleIsolate> e(v8System);
-  e.expectEval(
-      "new NonConstructible().method()",
-      "throws", "TypeError: Illegal constructor");
+  e.expectEval("new NonConstructible().method()", "throws", "TypeError: Illegal constructor");
 
-  e.expectEval(
-      "getNonConstructible(12321).method()",
-      "number", "12321");
+  e.expectEval("getNonConstructible(12321).method()", "number", "12321");
 
-  e.expectEval(
-      "getNonConstructible(12321) instanceof NonConstructible",
-      "boolean", "true");
+  e.expectEval("getNonConstructible(12321) instanceof NonConstructible", "boolean", "true");
 }
 
 // ========================================================================================
 
-struct IterableContext: public Object {
+struct IterableContext: public ContextGlobalObject {
   class Iterable: public Object {
-  public:
-    static Ref<Iterable> constructor() { return jsg::alloc<Iterable>(); }
+   public:
+    static Ref<Iterable> constructor() {
+      return jsg::alloc<Iterable>();
+    }
 
     class Iterator: public Object {
-    public:
+     public:
       struct NextValue {
         bool done;
         Optional<int> value;
@@ -248,11 +250,12 @@ struct IterableContext: public Object {
       };
 
       explicit Iterator(Ref<Iterable> parentParam)
-          : parent(kj::mv(parentParam)), cursor(parent->values) {}
+          : parent(kj::mv(parentParam)),
+            cursor(parent->values) {}
 
       NextValue next() {
         if (cursor == parent->values + sizeof(parent->values) / sizeof(*parent->values)) {
-          return {.done = true, .value = nullptr};
+          return {.done = true, .value = kj::none};
         }
         return {.done = false, .value = *cursor++};
       }
@@ -269,7 +272,7 @@ struct IterableContext: public Object {
         JSG_ITERABLE(self);
       }
 
-    private:
+     private:
       Ref<Iterable> parent;
       int* cursor;
     };
@@ -283,7 +286,7 @@ struct IterableContext: public Object {
       JSG_ITERABLE(entries);
     }
 
-  private:
+   private:
     int values[10] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
     // In real code, this data structure could be more complex, and we would need to think about
     // iterator invalidation, which might require storing back-references from the parent iterable
@@ -295,42 +298,42 @@ struct IterableContext: public Object {
     JSG_NESTED_TYPE(Iterable);
   }
 };
-JSG_DECLARE_ISOLATE_TYPE(IterableIsolate, IterableContext, IterableContext::Iterable,
-    IterableContext::Iterable::Iterator, IterableContext::Iterable::Iterator::NextValue);
+JSG_DECLARE_ISOLATE_TYPE(IterableIsolate,
+    IterableContext,
+    IterableContext::Iterable,
+    IterableContext::Iterable::Iterator,
+    IterableContext::Iterable::Iterator::NextValue);
 
 KJ_TEST("Iterables can be iterated") {
   Evaluator<IterableContext, IterableIsolate> e(v8System);
-  e.expectEval(
-      "let results = [];"
-      "for (let n of new Iterable()) { results.push(n); };"
-      "'' + results.join('')",
-      "string", "0123456789"
-  );
-  e.expectEval(
-      "let results = [];"
-      "for (let n of new Iterable().entries()) { results.push(n); };"
-      "'' + results.join('')",
-      "string", "0123456789"
-  );
+  e.expectEval("let results = [];"
+               "for (let n of new Iterable()) { results.push(n); };"
+               "'' + results.join('')",
+      "string", "0123456789");
+  e.expectEval("let results = [];"
+               "for (let n of new Iterable().entries()) { results.push(n); };"
+               "'' + results.join('')",
+      "string", "0123456789");
   e.expectEval(
       "let arrayIterator = [][Symbol.iterator]();"
       "let arrayIteratorPrototype = Object.getPrototypeOf(Object.getPrototypeOf(arrayIterator));"
       "let iterator = new Iterable().entries();"
       "let iteratorPrototype = Object.getPrototypeOf(Object.getPrototypeOf(iterator));"
       "iteratorPrototype === arrayIteratorPrototype",
-      "boolean", "true"
-  );
+      "boolean", "true");
 }
 
 // ========================================================================================
 
-struct StaticContext: public Object {
+struct StaticContext: public ContextGlobalObject {
   struct StaticConstants: public Object {
-    static Ref<StaticConstants> constructor() { return jsg::alloc<StaticConstants>(); }
+    static Ref<StaticConstants> constructor() {
+      return jsg::alloc<StaticConstants>();
+    }
 
-    static constexpr double        DOUBLE = 1.5;
-    static constexpr int           INT = 123;
-    static constexpr bool          BOOL = true;
+    static constexpr double DOUBLE = 1.5;
+    static constexpr int INT = 123;
+    static constexpr bool BOOL = true;
     static constexpr kj::StringPtr STRING = "a static constant string"_kj;
 
     JSG_RESOURCE_TYPE(StaticConstants) {
@@ -342,16 +345,24 @@ struct StaticContext: public Object {
   };
 
   struct StaticMethods: public Object {
-    static Ref<StaticMethods> constructor() { return jsg::alloc<StaticMethods>(); }
+    static Ref<StaticMethods> constructor() {
+      return jsg::alloc<StaticMethods>();
+    }
 
-    static v8::Local<v8::Value> passThrough(v8::Local<v8::Value> arg) { return arg; }
-    static v8::Local<v8::Value> passThroughWithInfo(const v8::FunctionCallbackInfo<v8::Value>& info,
-                                                    v8::Local<v8::Value> arg) { return arg; }
+    static v8::Local<v8::Value> passThrough(v8::Local<v8::Value> arg) {
+      return arg;
+    }
+    static v8::Local<v8::Value> passThroughWithInfo(
+        const v8::FunctionCallbackInfo<v8::Value>& info, v8::Local<v8::Value> arg) {
+      return arg;
+    }
 
     static void voidCall() {}
     static void voidCallWithInfo(const v8::FunctionCallbackInfo<v8::Value>& info) {}
 
-    static Unimplemented unimplementedStaticMethod() { return {}; }
+    static Unimplemented unimplementedStaticMethod() {
+      return {};
+    }
 
     static void delete_() {}
 
@@ -370,84 +381,38 @@ struct StaticContext: public Object {
     JSG_NESTED_TYPE(StaticMethods);
   }
 };
-JSG_DECLARE_ISOLATE_TYPE(StaticIsolate, StaticContext, StaticContext::StaticConstants,
-    StaticContext::StaticMethods);
+JSG_DECLARE_ISOLATE_TYPE(
+    StaticIsolate, StaticContext, StaticContext::StaticConstants, StaticContext::StaticMethods);
 
 KJ_TEST("Static constants are exposed as constructor properties") {
   Evaluator<StaticContext, StaticIsolate> e(v8System);
-  e.expectEval(
-      "StaticConstants.DOUBLE === 1.5",
-      "boolean", "true"
-  );
-  e.expectEval(
-      "StaticConstants.INT === 123",
-      "boolean", "true"
-  );
-  e.expectEval(
-      "StaticConstants.BOOL === true",
-      "boolean", "true"
-  );
-  e.expectEval(
-      "StaticConstants.STRING === 'a static constant string'",
-      "boolean", "true"
-  );
+  e.expectEval("StaticConstants.DOUBLE === 1.5", "boolean", "true");
+  e.expectEval("StaticConstants.INT === 123", "boolean", "true");
+  e.expectEval("StaticConstants.BOOL === true", "boolean", "true");
+  e.expectEval("StaticConstants.STRING === 'a static constant string'", "boolean", "true");
 }
 KJ_TEST("Static constants are exposed as constructor prototype properties") {
   Evaluator<StaticContext, StaticIsolate> e(v8System);
+  e.expectEval("StaticConstants.prototype.DOUBLE === 1.5", "boolean", "true");
+  e.expectEval("StaticConstants.prototype.INT === 123", "boolean", "true");
+  e.expectEval("StaticConstants.prototype.BOOL === true", "boolean", "true");
   e.expectEval(
-      "StaticConstants.prototype.DOUBLE === 1.5",
-      "boolean", "true"
-  );
-  e.expectEval(
-      "StaticConstants.prototype.INT === 123",
-      "boolean", "true"
-  );
-  e.expectEval(
-      "StaticConstants.prototype.BOOL === true",
-      "boolean", "true"
-  );
-  e.expectEval(
-      "StaticConstants.prototype.STRING === 'a static constant string'",
-      "boolean", "true"
-  );
+      "StaticConstants.prototype.STRING === 'a static constant string'", "boolean", "true");
 }
 KJ_TEST("Static constants are exposed as object instance properties") {
   Evaluator<StaticContext, StaticIsolate> e(v8System);
-  e.expectEval(
-      "new StaticConstants().DOUBLE === 1.5",
-      "boolean", "true"
-  );
-  e.expectEval(
-      "new StaticConstants().INT === 123",
-      "boolean", "true"
-  );
-  e.expectEval(
-      "new StaticConstants().BOOL === true",
-      "boolean", "true"
-  );
-  e.expectEval(
-      "new StaticConstants().STRING === 'a static constant string'",
-      "boolean", "true"
-  );
+  e.expectEval("new StaticConstants().DOUBLE === 1.5", "boolean", "true");
+  e.expectEval("new StaticConstants().INT === 123", "boolean", "true");
+  e.expectEval("new StaticConstants().BOOL === true", "boolean", "true");
+  e.expectEval("new StaticConstants().STRING === 'a static constant string'", "boolean", "true");
 }
 KJ_TEST("Static constants are exposed as object instance prototype properties") {
   Evaluator<StaticContext, StaticIsolate> e(v8System);
-  e.expectEval(
-      "Object.getPrototypeOf(new StaticConstants()).DOUBLE === 1.5",
-      "boolean", "true"
-  );
-  e.expectEval(
-      "Object.getPrototypeOf(new StaticConstants()).INT === 123",
-      "boolean", "true"
-  );
-  e.expectEval(
-      "Object.getPrototypeOf(new StaticConstants()).BOOL === true",
-      "boolean", "true"
-  );
-  e.expectEval(
-      "Object.getPrototypeOf(new StaticConstants()).STRING === 'a static constant string'",
-      "boolean", "true"
-  );
+  e.expectEval("Object.getPrototypeOf(new StaticConstants()).DOUBLE === 1.5", "boolean", "true");
+  e.expectEval("Object.getPrototypeOf(new StaticConstants()).INT === 123", "boolean", "true");
+  e.expectEval("Object.getPrototypeOf(new StaticConstants()).BOOL === true", "boolean", "true");
+  e.expectEval("Object.getPrototypeOf(new StaticConstants()).STRING === 'a static constant string'",
+      "boolean", "true");
 }
 KJ_TEST("Static methods are exposed as constructor properties") {
   Evaluator<StaticContext, StaticIsolate> e(v8System);
@@ -456,62 +421,54 @@ KJ_TEST("Static methods are exposed as constructor properties") {
   e.expectEval("StaticMethods.voidCall(); true;", "boolean", "true");
   e.expectEval("StaticMethods.voidCallWithInfo(); true;", "boolean", "true");
   e.expectEval("StaticMethods.delete(); true;", "boolean", "true");
-  e.expectEval("StaticMethods.unimplementedStaticMethod()",
-      "throws", "Error: Failed to execute 'unimplementedStaticMethod' on 'StaticMethods': "
-                "the method is not implemented.");
-  e.expectEval("new StaticMethods.passThrough(true);",
-      "throws", "TypeError: StaticMethods.passThrough is not a constructor");
+  e.expectEval("StaticMethods.unimplementedStaticMethod()", "throws",
+      "Error: Failed to execute 'unimplementedStaticMethod' on 'StaticMethods': "
+      "the method is not implemented.");
+  e.expectEval("new StaticMethods.passThrough(true);", "throws",
+      "TypeError: StaticMethods.passThrough is not a constructor");
 }
 KJ_TEST("Static methods are not exposed as constructor prototype properties") {
   Evaluator<StaticContext, StaticIsolate> e(v8System);
-  e.expectEval(
-      "typeof StaticMethods.prototype.passThrough === 'undefined'\n"
-      "&& typeof StaticMethods.prototype.passThroughWithInfo === 'undefined'\n"
-      "&& typeof StaticMethods.prototype.voidCall === 'undefined'\n"
-      "&& typeof StaticMethods.prototype.voidCallWithInfo === 'undefined'\n"
-      "&& typeof StaticMethods.prototype.delete === 'undefined'\n"
-      "&& typeof StaticMethods.prototype.unimplementedStaticMethod === 'undefined'",
-      "boolean", "true"
-  );
+  e.expectEval("typeof StaticMethods.prototype.passThrough === 'undefined'\n"
+               "&& typeof StaticMethods.prototype.passThroughWithInfo === 'undefined'\n"
+               "&& typeof StaticMethods.prototype.voidCall === 'undefined'\n"
+               "&& typeof StaticMethods.prototype.voidCallWithInfo === 'undefined'\n"
+               "&& typeof StaticMethods.prototype.delete === 'undefined'\n"
+               "&& typeof StaticMethods.prototype.unimplementedStaticMethod === 'undefined'",
+      "boolean", "true");
 }
 KJ_TEST("Static methods are not exposed as object instance properties") {
   Evaluator<StaticContext, StaticIsolate> e(v8System);
-  e.expectEval(
-      "let obj = new StaticMethods();\n"
-      "typeof obj.passThrough === 'undefined'\n"
-      "&& typeof obj.passThroughWithInfo === 'undefined'\n"
-      "&& typeof obj.voidCall === 'undefined'\n"
-      "&& typeof obj.voidCallWithInfo === 'undefined'\n"
-      "&& typeof obj.delete === 'undefined'\n"
-      "&& typeof obj.unimplementedStaticMethod === 'undefined'",
-      "boolean", "true"
-  );
+  e.expectEval("let obj = new StaticMethods();\n"
+               "typeof obj.passThrough === 'undefined'\n"
+               "&& typeof obj.passThroughWithInfo === 'undefined'\n"
+               "&& typeof obj.voidCall === 'undefined'\n"
+               "&& typeof obj.voidCallWithInfo === 'undefined'\n"
+               "&& typeof obj.delete === 'undefined'\n"
+               "&& typeof obj.unimplementedStaticMethod === 'undefined'",
+      "boolean", "true");
 }
 KJ_TEST("Static methods are not exposed as object instance prototype properties") {
   Evaluator<StaticContext, StaticIsolate> e(v8System);
-  e.expectEval(
-      "let objProto = Object.getPrototypeOf(new StaticMethods());\n"
-      "typeof objProto.passThrough === 'undefined'\n"
-      "&& typeof objProto.passThroughWithInfo === 'undefined'\n"
-      "&& typeof objProto.voidCall === 'undefined'\n"
-      "&& typeof objProto.voidCallWithInfo === 'undefined'\n"
-      "&& typeof objProto.delete === 'undefined'\n"
-      "&& typeof objProto.unimplementedStaticMethod === 'undefined'",
-      "boolean", "true"
-  );
+  e.expectEval("let objProto = Object.getPrototypeOf(new StaticMethods());\n"
+               "typeof objProto.passThrough === 'undefined'\n"
+               "&& typeof objProto.passThroughWithInfo === 'undefined'\n"
+               "&& typeof objProto.voidCall === 'undefined'\n"
+               "&& typeof objProto.voidCallWithInfo === 'undefined'\n"
+               "&& typeof objProto.delete === 'undefined'\n"
+               "&& typeof objProto.unimplementedStaticMethod === 'undefined'",
+      "boolean", "true");
 }
 KJ_TEST("Static methods can be monkey-patched") {
   Evaluator<StaticContext, StaticIsolate> e(v8System);
-  e.expectEval(
-      "StaticMethods.passThrough = function(a) { return false; };\n"
-      "StaticMethods.passThrough(true)",
-      "boolean", "false"
-  );
+  e.expectEval("StaticMethods.passThrough = function(a) { return false; };\n"
+               "StaticMethods.passThrough(true)",
+      "boolean", "false");
 }
 
 // ========================================================================================
 
-struct ReflectionContext: public Object {
+struct ReflectionContext: public ContextGlobalObject {
   struct Super: public Object {
     JSG_RESOURCE_TYPE(Super) {}
   };
@@ -521,8 +478,8 @@ struct ReflectionContext: public Object {
       auto result = jsg::alloc<Reflector>();
 
       // Check reflection returns null when wrapper isn't allocated.
-      KJ_EXPECT(result->intReflector.get(isolate, "foo") == nullptr);
-      KJ_EXPECT(result->stringReflector.get(isolate, "foo") == nullptr);
+      KJ_EXPECT(result->intReflector.get(isolate, "foo") == kj::none);
+      KJ_EXPECT(result->stringReflector.get(isolate, "foo") == kj::none);
 
       return result;
     }
@@ -559,8 +516,8 @@ struct ReflectionContext: public Object {
     JSG_METHOD(makeSuper);
   }
 };
-JSG_DECLARE_ISOLATE_TYPE(ReflectionIsolate, ReflectionContext,
-                          ReflectionContext::Super, ReflectionContext::Reflector);
+JSG_DECLARE_ISOLATE_TYPE(
+    ReflectionIsolate, ReflectionContext, ReflectionContext::Super, ReflectionContext::Reflector);
 
 KJ_TEST("PropertyReflection works") {
   Evaluator<ReflectionContext, ReflectionIsolate> e(v8System);
@@ -574,7 +531,7 @@ KJ_TEST("PropertyReflection works") {
 
 // ========================================================================================
 
-struct InjectLockContext: public Object {
+struct InjectLockContext: public ContextGlobalObject {
   struct Thingy: public Object {
     Thingy(int val, v8::Isolate* v8Isolate): val(val), v8Isolate(v8Isolate) {}
     int val;
@@ -612,7 +569,6 @@ struct InjectLockContext: public Object {
     }
   };
 
-
   JSG_RESOURCE_TYPE(InjectLockContext) {
     JSG_NESTED_TYPE(Thingy);
   }
@@ -622,6 +578,137 @@ JSG_DECLARE_ISOLATE_TYPE(InjectLockIsolate, InjectLockContext, InjectLockContext
 KJ_TEST("Methods can take Lock& as first parameter") {
   Evaluator<InjectLockContext, InjectLockIsolate> e(v8System);
   e.expectEval("let t = new Thingy(123); t.val", "number", "123");
+}
+
+// ========================================================================================
+
+struct JsBundleContext: public ContextGlobalObject {
+  JSG_RESOURCE_TYPE(JsBundleContext) {
+    JSG_CONTEXT_JS_BUNDLE(BUILTIN_BUNDLE);
+  }
+};
+JSG_DECLARE_ISOLATE_TYPE(JsBundleIsolate, JsBundleContext);
+
+KJ_TEST("expectEvalModule function works") {
+  Evaluator<JsBundleContext, JsBundleIsolate, decltype(nullptr), JsBundleIsolate_TypeWrapper> e(
+      v8System);
+  e.expectEvalModule("export function run() { return 123; }", "number", "123");
+}
+
+KJ_TEST("bundle installed works") {
+  Evaluator<JsBundleContext, JsBundleIsolate, decltype(nullptr), JsBundleIsolate_TypeWrapper> e(
+      v8System);
+  e.expectEvalModule(R"(
+    import * as b from "test:resource-test-builtin";
+    export function run() { return b.builtinFunction(); }
+  )",
+      "string", "THIS_IS_BUILTIN_FUNCTION");
+}
+
+// ========================================================================================
+
+struct JsLazyReadonlyPropertyContext: public ContextGlobalObject {
+  JSG_RESOURCE_TYPE(JsLazyReadonlyPropertyContext) {
+    JSG_CONTEXT_JS_BUNDLE(BOOTSTRAP_BUNDLE);
+
+    JSG_LAZY_JS_INSTANCE_READONLY_PROPERTY(bootstrapFunction, "test:resource-test-bootstrap");
+    JSG_LAZY_JS_INSTANCE_READONLY_PROPERTY(BootstrapClass, "test:resource-test-bootstrap");
+  }
+};
+JSG_DECLARE_ISOLATE_TYPE(JsLazyReadonlyPropertyIsolate, JsLazyReadonlyPropertyContext);
+
+KJ_TEST("lazy js global function works") {
+  Evaluator<JsLazyReadonlyPropertyContext, JsLazyReadonlyPropertyIsolate, decltype(nullptr),
+      JsLazyReadonlyPropertyIsolate_TypeWrapper>
+      e(v8System);
+  // both for module
+  e.expectEvalModule(R"(
+    export function run() { return bootstrapFunction(); }
+  )",
+      "string", "THIS_IS_BOOTSTRAP_FUNCTION");
+  // and script syntax
+  e.expectEval("bootstrapFunction()", "string", "THIS_IS_BOOTSTRAP_FUNCTION");
+}
+
+KJ_TEST("lazy js global class works") {
+  Evaluator<JsLazyReadonlyPropertyContext, JsLazyReadonlyPropertyIsolate, decltype(nullptr),
+      JsLazyReadonlyPropertyIsolate_TypeWrapper>
+      e(v8System);
+  // for module syntax
+  e.expectEvalModule(R"(
+    export function run() { return new BootstrapClass().run(); }
+  )",
+      "string", "THIS_IS_BOOTSTRAP_CLASS");
+  // and for script syntax
+  e.expectEval("new BootstrapClass().run()", "string", "THIS_IS_BOOTSTRAP_CLASS");
+}
+
+KJ_TEST("lazy js readonly property can not be overridden") {
+  Evaluator<JsLazyReadonlyPropertyContext, JsLazyReadonlyPropertyIsolate> e(v8System);
+  e.expectEval("globalThis.bootstrapFunction = function(){'boo'}; bootstrapFunction()", "string",
+      "THIS_IS_BOOTSTRAP_FUNCTION");
+  e.expectEval("bootstrapFunction = function(){'boo'}; bootstrapFunction()", "string",
+      "THIS_IS_BOOTSTRAP_FUNCTION");
+}
+
+// ========================================================================================
+
+struct JsLazyPropertyContext: public ContextGlobalObject {
+  JSG_RESOURCE_TYPE(JsLazyPropertyContext) {
+    JSG_CONTEXT_JS_BUNDLE(BOOTSTRAP_BUNDLE);
+
+    JSG_LAZY_JS_INSTANCE_PROPERTY(bootstrapFunction, "test:resource-test-bootstrap");
+    JSG_LAZY_JS_INSTANCE_PROPERTY(BootstrapClass, "test:resource-test-bootstrap");
+  }
+};
+JSG_DECLARE_ISOLATE_TYPE(JsLazyPropertyIsolate, JsLazyPropertyContext);
+
+KJ_TEST("lazy js global function works") {
+  Evaluator<JsLazyPropertyContext, JsLazyPropertyIsolate, decltype(nullptr),
+      JsLazyPropertyIsolate_TypeWrapper>
+      e(v8System);
+  // both for module
+  e.expectEvalModule(R"(
+    export function run() { return bootstrapFunction(); }
+  )",
+      "string", "THIS_IS_BOOTSTRAP_FUNCTION");
+  // and script syntax
+  e.expectEval("bootstrapFunction()", "string", "THIS_IS_BOOTSTRAP_FUNCTION");
+}
+
+KJ_TEST("lazy js global class works") {
+  Evaluator<JsLazyPropertyContext, JsLazyPropertyIsolate, decltype(nullptr),
+      JsLazyPropertyIsolate_TypeWrapper>
+      e(v8System);
+  // for module syntax
+  e.expectEvalModule(R"(
+    export function run() { return new BootstrapClass().run(); }
+  )",
+      "string", "THIS_IS_BOOTSTRAP_CLASS");
+  // and for script syntax
+  e.expectEval("new BootstrapClass().run()", "string", "THIS_IS_BOOTSTRAP_CLASS");
+}
+
+KJ_TEST("lazy js property can be overridden") {
+  Evaluator<JsLazyPropertyContext, JsLazyPropertyIsolate, decltype(nullptr),
+      JsLazyPropertyIsolate_TypeWrapper>
+      e(v8System);
+  // for module syntax
+  e.expectEvalModule(R"(
+    globalThis.bootstrapFunction = function(){return 'boo'}
+    export function run() { return bootstrapFunction(); }
+  )",
+      "string", "boo");
+  e.expectEvalModule(R"(
+    bootstrapFunction = function(){return 'boo'}
+    export function run() { return bootstrapFunction(); }
+  )",
+      "string", "boo");
+  // for script syntax
+  e.expectEval("globalThis.bootstrapFunction = function(){return 'boo';}; bootstrapFunction()",
+      "string", "boo");
+  e.expectEval(
+      "bootstrapFunction = function(){return 'boo';}; bootstrapFunction()", "string", "boo");
 }
 
 }  // namespace

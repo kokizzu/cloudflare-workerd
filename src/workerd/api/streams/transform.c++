@@ -3,19 +3,31 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 #include "transform.h"
-#include <workerd/jsg/function.h>
-#include <cmath>
+
+#include "internal.h"
+#include "standard.h"
+
+#include <workerd/io/features.h>
+#include <workerd/jsg/jsg.h>
 
 namespace workerd::api {
 
-jsg::Ref<TransformStream> TransformStream::constructor(
-    jsg::Lock& js,
+namespace {
+template <typename T>
+jsg::Function<T> maybeAddFunctor(auto t) {
+  if (IoContext::hasCurrent()) {
+    return jsg::Function<T>(IoContext::current().addFunctor(kj::mv(t)));
+  }
+  return jsg::Function<T>(kj::mv(t));
+}
+}  // namespace
+
+jsg::Ref<TransformStream> TransformStream::constructor(jsg::Lock& js,
     jsg::Optional<Transformer> maybeTransformer,
     jsg::Optional<StreamQueuingStrategy> maybeWritableStrategy,
-    jsg::Optional<StreamQueuingStrategy> maybeReadableStrategy,
-    CompatibilityFlags::Reader flags) {
+    jsg::Optional<StreamQueuingStrategy> maybeReadableStrategy) {
 
-  if (flags.getTransformStreamJavaScriptControllers()) {
+  if (FeatureFlags::get(js).getTransformStreamJavaScriptControllers()) {
     // The standard implementation. Here the TransformStream is backed by readable
     // and writable streams using the JavaScript-backed controllers. Data that is
     // written to the writable side passes through the transform function that is
@@ -29,106 +41,120 @@ jsg::Ref<TransformStream> TransformStream::constructor(
     // Persistent references to the TransformStreamDefaultController are held by both
     // the readable and writable sides. The actual TransformStream object can be dropped
     // and allowed to be garbage collected.
+
     auto controller = jsg::alloc<TransformStreamDefaultController>(js);
+    auto transformer = kj::mv(maybeTransformer).orDefault({});
 
-    auto readable = ReadableStream::constructor(
-        js,
-        UnderlyingSource {
-          .type = nullptr,
-          .autoAllocateChunkSize = nullptr,
-          .start = jsg::Function<UnderlyingSource::StartAlgorithm>(
-              // The C++ reference here is safe because the controller instance is guaranteed
-              // to live as long as the ReadableStream instance. Likewise in each of the other
-              // lambdas used below.
-              [&controller = *controller](jsg::Lock& js, auto c) {
-                return controller.getStartPromise();
-              }),
-          .pull = jsg::Function<UnderlyingSource::PullAlgorithm>(
-              [&controller = *controller](jsg::Lock& js, auto c) {
-                return controller.pull(js);
-              }),
-          .cancel = jsg::Function<UnderlyingSource::CancelAlgorithm>(
-              [&controller = *controller](jsg::Lock& js, auto reason) {
-                return controller.cancel(js, reason);
-              }),
-          .maybeTransformer = controller.addRef(),
-        },
-        kj::mv(maybeReadableStrategy),
-        kj::cp(flags));
+    // By default, let's signal backpressure on the readable side by setting the highWaterMark
+    // to zero if a strategy is not given. This effectively means that writes/reads will be
+    // one to one as long as the writer is respecting backpressure signals. If buffering
+    // occurs, it will happen in the writable side of the transform stream.
+    auto readableStrategy = kj::mv(maybeReadableStrategy)
+                                .orDefault(StreamQueuingStrategy{
+                                  .highWaterMark = 0,
+                                });
 
-    auto writable = WritableStream::constructor(
-        js,
-        UnderlyingSink {
-          .type = nullptr,
-          .start = jsg::Function<UnderlyingSink::StartAlgorithm>(
-              [&controller = *controller](jsg::Lock& js, auto c){
-                return controller.getStartPromise();
-              }),
-          .write = jsg::Function<UnderlyingSink::WriteAlgorithm>(
-              [&controller = *controller](jsg::Lock& js, auto chunk, auto c) {
-                return controller.write(js, chunk);
-              }),
-          .abort = jsg::Function<UnderlyingSink::AbortAlgorithm>(
-              [&controller = *controller](jsg::Lock& js, auto reason) {
-                return controller.abort(js, reason);
-              }),
-          .close = jsg::Function<UnderlyingSink::CloseAlgorithm>(
-              [&controller = *controller](jsg::Lock& js) {
-                return controller.close(js);
-              }),
-          .maybeTransformer = controller.addRef(),
+    auto readable = ReadableStream::constructor(js,
+        UnderlyingSource{
+          .type = kj::none,
+          .autoAllocateChunkSize = kj::none,
+          .start = maybeAddFunctor<UnderlyingSource::StartAlgorithm>(
+              JSG_VISITABLE_LAMBDA((controller = controller.addRef()), (controller),
+                  (jsg::Lock & js, auto c) mutable { return controller->getStartPromise(js); })),
+          .pull = maybeAddFunctor<UnderlyingSource::PullAlgorithm>(
+              JSG_VISITABLE_LAMBDA((controller = controller.addRef()), (controller),
+                  (jsg::Lock & js, auto c) mutable { return controller->pull(js); })),
+          .cancel = maybeAddFunctor<UnderlyingSource::CancelAlgorithm>( JSG_VISITABLE_LAMBDA(
+              (controller = controller.addRef()), (controller),
+              (jsg::Lock & js, auto reason) mutable { return controller->cancel(js, reason); })),
+          .expectedLength = transformer.expectedLength.map(
+              [](uint64_t expectedLength) { return expectedLength; }),
         },
-        kj::mv(maybeWritableStrategy),
-        kj::mv(flags));
+        kj::mv(readableStrategy));
+
+    auto writable = WritableStream::constructor(js,
+        UnderlyingSink{
+          .type = kj::none,
+          .start = maybeAddFunctor<UnderlyingSink::StartAlgorithm>(
+              JSG_VISITABLE_LAMBDA((controller = controller.addRef()), (controller),
+                  (jsg::Lock & js, auto c) mutable { return controller->getStartPromise(js); })),
+          .write = maybeAddFunctor<UnderlyingSink::WriteAlgorithm>(
+              JSG_VISITABLE_LAMBDA((controller = controller.addRef()), (controller),
+                  (jsg::Lock & js, auto chunk, auto c) mutable {
+                    return controller->write(js, chunk);
+                  })),
+          .abort = maybeAddFunctor<UnderlyingSink::AbortAlgorithm>(
+              JSG_VISITABLE_LAMBDA((controller = controller.addRef()), (controller),
+                  (jsg::Lock & js, auto reason) mutable { return controller->abort(js, reason); })),
+          .close = maybeAddFunctor<UnderlyingSink::CloseAlgorithm>(
+              JSG_VISITABLE_LAMBDA((controller = controller.addRef()), (controller),
+                  (jsg::Lock & js) mutable { return controller->close(js); })),
+        },
+        kj::mv(maybeWritableStrategy));
 
     // The controller will store c++ references to both the readable and writable
     // streams underlying controllers.
-    controller->init(js, readable, writable, kj::mv(maybeTransformer));
+    controller->init(js, readable, writable, kj::mv(transformer));
 
     return jsg::alloc<TransformStream>(kj::mv(readable), kj::mv(writable));
   }
 
   // The old implementation just defers to IdentityTransformStream. If any of the arguments
   // are specified we throw because it's most likely that they want the standard implementation
-  // but the feature flag is not set.
-  if (maybeTransformer != nullptr ||
-      maybeWritableStrategy != nullptr ||
-      maybeReadableStrategy != nullptr) {
+  // but the compatibility flag is not set.
+  if (maybeTransformer != kj::none || maybeWritableStrategy != kj::none ||
+      maybeReadableStrategy != kj::none) {
     IoContext::current().logWarningOnce(
         "To use the new TransformStream() constructor with a "
-        "custom transformer, enable the transformstream_enable_standard_constructor feature flag.");
+        "custom transformer, enable the transformstream_enable_standard_constructor compatibility flag. "
+        "Refer to the docs for more information: https://developers.cloudflare.com/workers/platform/compatibility-dates/#compatibility-flags");
   }
 
   return IdentityTransformStream::constructor(js);
 }
 
-jsg::Ref<IdentityTransformStream> IdentityTransformStream::constructor(jsg::Lock& js) {
-  auto readableSide = kj::refcounted<IdentityTransformStreamImpl>();
-  auto writableSide = kj::addRef(*readableSide);
+jsg::Ref<IdentityTransformStream> IdentityTransformStream::constructor(
+    jsg::Lock& js, jsg::Optional<IdentityTransformStream::QueuingStrategy> maybeQueuingStrategy) {
 
   auto& ioContext = IoContext::current();
+  auto pipe = newIdentityPipe();
 
-  return jsg::alloc<IdentityTransformStream>(
-      jsg::alloc<ReadableStream>(ioContext, kj::mv(readableSide)),
-      jsg::alloc<WritableStream>(ioContext, kj::mv(writableSide)));
+  kj::Maybe<uint64_t> maybeHighWaterMark = kj::none;
+  KJ_IF_SOME(queuingStrategy, maybeQueuingStrategy) {
+    maybeHighWaterMark = queuingStrategy.highWaterMark;
+  }
+  return jsg::alloc<IdentityTransformStream>(jsg::alloc<ReadableStream>(ioContext, kj::mv(pipe.in)),
+      jsg::alloc<WritableStream>(ioContext, kj::mv(pipe.out),
+          ioContext.getMetrics().tryCreateWritableByteStreamObserver(), maybeHighWaterMark));
 }
 
-jsg::Ref<FixedLengthStream> FixedLengthStream::constructor(
-    jsg::Lock& js,
-    uint64_t expectedLength) {
+jsg::Ref<FixedLengthStream> FixedLengthStream::constructor(jsg::Lock& js,
+    uint64_t expectedLength,
+    jsg::Optional<IdentityTransformStream::QueuingStrategy> maybeQueuingStrategy) {
   constexpr uint64_t MAX_SAFE_INTEGER = (1ull << 53) - 1;
 
   JSG_REQUIRE(expectedLength <= MAX_SAFE_INTEGER, TypeError,
       "FixedLengthStream requires an integer expected length less than 2^53.");
 
-  auto readableSide = kj::refcounted<IdentityTransformStreamImpl>(uint64_t(expectedLength));
-  auto writableSide = kj::addRef(*readableSide);
-
   auto& ioContext = IoContext::current();
+  auto pipe = newIdentityPipe(uint64_t(expectedLength));
 
-  return jsg::alloc<FixedLengthStream>(
-      jsg::alloc<ReadableStream>(ioContext, kj::mv(readableSide)),
-      jsg::alloc<WritableStream>(ioContext, kj::mv(writableSide)));
+  kj::Maybe<uint64_t> maybeHighWaterMark = kj::none;
+  // For a FixedLengthStream we do not want a highWaterMark higher than the expectedLength.
+  KJ_IF_SOME(queuingStrategy, maybeQueuingStrategy) {
+    maybeHighWaterMark = queuingStrategy.highWaterMark.map(
+        [&](uint64_t highWaterMark) { return kj::min(expectedLength, highWaterMark); });
+  }
+
+  return jsg::alloc<FixedLengthStream>(jsg::alloc<ReadableStream>(ioContext, kj::mv(pipe.in)),
+      jsg::alloc<WritableStream>(ioContext, kj::mv(pipe.out),
+          ioContext.getMetrics().tryCreateWritableByteStreamObserver(), maybeHighWaterMark));
+}
+
+OneWayPipe newIdentityPipe(kj::Maybe<uint64_t> expectedLength) {
+  auto readableSide = kj::refcounted<IdentityTransformStreamImpl>(expectedLength);
+  auto writableSide = kj::addRef(*readableSide);
+  return OneWayPipe{.in = kj::mv(readableSide), .out = kj::mv(writableSide)};
 }
 
 }  // namespace workerd::api

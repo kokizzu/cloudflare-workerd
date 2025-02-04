@@ -3,6 +3,7 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 #include "io-gate.h"
+
 #include <kj/test.h>
 
 namespace workerd {
@@ -135,7 +136,7 @@ KJ_TEST("InputGate nested critical sections") {
   }
 
   // Start cs2.
-  cs2->wait();
+  cs2->wait().wait(ws);
 
   // Can't start new tasks in cs1 until cs2 finishes.
   auto cs1Wait = cs1->wait();
@@ -166,7 +167,7 @@ KJ_TEST("InputGate nested critical section outlives parent") {
   }
 
   // Start cs2.
-  cs2->wait();
+  cs2->wait().wait(ws);
 
   // Mark cs1 done. (Note that, in a real program, this probably can't happen like this, because a
   // lock would be taken on cs1 before marking it done, and that lock would wait for cs2 to
@@ -210,7 +211,7 @@ KJ_TEST("InputGate deeply nested critical sections") {
   }
 
   // Start cs2
-  cs2->wait();
+  cs2->wait().wait(ws);
 
   // Add some waiters to cs2, some of which are waiting to start more nested critical sections
   auto lock = cs2->wait().wait(ws);
@@ -297,6 +298,9 @@ KJ_TEST("InputGate critical section lock outlives critical section") {
   // Lock should have been reparented, so should still work.
   KJ_ASSERT(lock.isFor(gate));
 
+  // Adding a ref and dropping it shouldn't cause trouble.
+  lock.addRef();
+
   // The gate should still be locked
   auto waiter = gate.wait();
   KJ_EXPECT(!waiter.poll(ws));
@@ -333,7 +337,7 @@ KJ_TEST("InputGate broken") {
   }
 
   // start cs2
-  cs2->wait();
+  cs2->wait().wait(ws);
 
   auto cs1Wait = cs1->wait();
   KJ_EXPECT(!cs1Wait.poll(ws));

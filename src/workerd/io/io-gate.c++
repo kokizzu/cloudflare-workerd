@@ -2,12 +2,13 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-#include "io-gate.h"
+#include <workerd/io/io-gate.h>
+
 #include <kj/debug.h>
 
 namespace workerd {
 
-InputGate::Hooks InputGate::Hooks::DEFAULT;
+const InputGate::Hooks InputGate::Hooks::DEFAULT;
 
 InputGate::InputGate(Hooks& hooks): InputGate(hooks, kj::newPromiseAndFulfiller<void>()) {}
 InputGate::InputGate(Hooks& hooks, kj::PromiseFulfillerPair<void> paf)
@@ -25,7 +26,9 @@ InputGate::~InputGate() noexcept {
 
 InputGate::Waiter::Waiter(
     kj::PromiseFulfiller<Lock>& fulfiller, InputGate& gate, bool isChildWaiter)
-    : fulfiller(fulfiller), gate(&gate), isChildWaiter(isChildWaiter) {
+    : fulfiller(fulfiller),
+      gate(&gate),
+      isChildWaiter(isChildWaiter) {
   gate.hooks.inputGateWaiterAdded();
   if (isChildWaiter) {
     gate.waitingChildren.add(*this);
@@ -45,8 +48,8 @@ InputGate::Waiter::~Waiter() noexcept(false) {
 }
 
 kj::Promise<InputGate::Lock> InputGate::wait() {
-  KJ_IF_MAYBE(e, brokenState.tryGet<kj::Exception>()) {
-    return kj::cp(*e);
+  KJ_IF_SOME(e, brokenState.tryGet<kj::Exception>()) {
+    return kj::cp(e);
   } else if (lockCount == 0) {
     return Lock(*this);
   } else {
@@ -55,10 +58,27 @@ kj::Promise<InputGate::Lock> InputGate::wait() {
 }
 
 kj::Promise<void> InputGate::onBroken() {
-  KJ_IF_MAYBE(e, brokenState.tryGet<kj::Exception>()) {
-    return kj::cp(*e);
+  KJ_IF_SOME(e, brokenState.tryGet<kj::Exception>()) {
+    return kj::cp(e);
   } else {
     return brokenPromise.addBranch();
+  }
+}
+
+InputGate::Lock::Lock(InputGate& gate)
+    : gate(&gate),
+      cs(gate.isCriticalSection ? kj::Maybe(kj::addRef(static_cast<CriticalSection&>(gate)))
+                                : kj::none) {
+  InputGate* gateToLock = &gate;
+
+  KJ_IF_SOME(c, cs) {
+    if (c.get()->state == CriticalSection::REPARENTED) {
+      gateToLock = &c.get()->parentAsInputGate();
+    }
+  }
+
+  if (++gateToLock->lockCount == 1) {
+    gateToLock->hooks.inputGateLocked();
   }
 }
 
@@ -72,6 +92,7 @@ void InputGate::releaseLock() {
       // Ensure any waiters on us have already been reparented.
       KJ_DASSERT(self.waitingChildren.size() == 0);
       KJ_DASSERT(self.waiters.size() == 0);
+      KJ_DASSERT(lockCount == 0);
 
       self.parentAsInputGate().releaseLock();
       return;
@@ -103,7 +124,7 @@ kj::Maybe<InputGate::CriticalSection&> InputGate::Lock::getCriticalSection() {
   if (gate->isCriticalSection) {
     return static_cast<CriticalSection&>(*gate);
   } else {
-    return nullptr;
+    return kj::none;
   }
 }
 
@@ -134,8 +155,8 @@ InputGate::CriticalSection::~CriticalSection() noexcept(false) {
       // The initial wait() had better have been canceled... but we have no way to tell here.
       break;
     case RUNNING:
-      failed(JSG_KJ_EXCEPTION(FAILED, Error,
-          "A critical section within this Durable Object awaited a Promise that "
+      failed(KJ_EXCEPTION(FAILED,
+          "jsg.Error: A critical section within this Durable Object awaited a Promise that "
           "apparently will never complete. This could happen in particular if a critical section "
           "awaits a task that was initiated outside of the critical section. Since a critical "
           "section blocks all other tasks from completing, this leads to deadlock."));
@@ -147,59 +168,62 @@ InputGate::CriticalSection::~CriticalSection() noexcept(false) {
 }
 
 kj::Promise<InputGate::Lock> InputGate::CriticalSection::wait() {
-  switch (state) {
-    case NOT_STARTED: {
-      state = INITIAL_WAIT;
+  for (;;) {
+    switch (state) {
+      case NOT_STARTED: {
+        state = INITIAL_WAIT;
 
-      auto& target = parentAsInputGate();
-      KJ_IF_MAYBE(e, target.brokenState.tryGet<kj::Exception>()) {
-        // Oops, we're broken.
-        setBroken(*e);
-        return kj::cp(*e);
-      }
-
-      // Add ourselves to this parent's child waiter list.
-      if (target.lockCount == 0) {
-        state = RUNNING;
-        parentLock = Lock(target);
-        return wait();
-      } else {
-        return kj::newAdaptedPromise<Lock, Waiter>(target, true)
-            .then([this](Lock lock) {
-          state = RUNNING;
-          parentLock = kj::mv(lock);
-          return wait();
-        }, [this](kj::Exception&& e) -> kj::Promise<InputGate::Lock> {
-          state = RUNNING;
+        auto& target = parentAsInputGate();
+        KJ_IF_SOME(e, target.brokenState.tryGet<kj::Exception>()) {
+          // Oops, we're broken.
           setBroken(e);
-          return kj::mv(e);
-        });
+          kj::throwFatalException(kj::cp(e));
+        }
+
+        // Add ourselves to this parent's child waiter list.
+        if (target.lockCount == 0) {
+          state = RUNNING;
+          parentLock = Lock(target);
+          continue;
+        } else {
+          try {
+            auto lock = co_await kj::newAdaptedPromise<Lock, Waiter>(target, true);
+            state = RUNNING;
+            parentLock = kj::mv(lock);
+            continue;
+          } catch (...) {
+            auto exception = kj::getCaughtExceptionAsKj();
+            state = RUNNING;
+            setBroken(exception);
+            kj::throwFatalException(kj::mv(exception));
+          }
+        }
       }
+      case INITIAL_WAIT:
+        // To avoid the need for a ForkedPromise, we assume wait() is called once initially to
+        // get things started. This is the case in practice because any further tasks would be
+        // started only after some code runs under the initial lock.
+        KJ_FAIL_REQUIRE("CriticalSection::wait() should be called once initially");
+      case RUNNING:
+        // CriticalSection is active, so defer to InputGate implementation.
+        co_return co_await InputGate::wait();
+      case REPARENTED:
+        // Once the CriticalSection has declared itself done, then any straggler tasks it initiated
+        // are adopted by the parent.
+        // WARNING: Don't use parentAsInputGate() here as that'll bypass the override of wait() if
+        //   the parent is a CriticalSection itself.
+        KJ_SWITCH_ONEOF(parent) {
+          KJ_CASE_ONEOF(p, InputGate*) {
+            co_return co_await p->wait();
+          }
+          KJ_CASE_ONEOF(c, kj::Own<CriticalSection>) {
+            co_return co_await c->wait();
+          }
+        }
+        KJ_UNREACHABLE;
     }
-    case INITIAL_WAIT:
-      // To avoid the need for a ForkedPromise, we assume wait() is called once initially to
-      // get things started. This is the case in practice because any further tasks would be
-      // started only after some code runs under the initial lock.
-      KJ_FAIL_REQUIRE("CriticalSection::wait() should be called once initially");
-    case RUNNING:
-      // CriticalSection is active, so defer to InputGate implementation.
-      return InputGate::wait();
-    case REPARENTED:
-      // Once the CriticalSection has declared itself done, then any straggler tasks it initiated
-      // are adopted by the parent.
-      // WARNING: Don't use parentAsInputGate() here as that'll bypass the override of wait() if
-      //   the parent is a CriticalSection itself.
-      KJ_SWITCH_ONEOF(parent) {
-        KJ_CASE_ONEOF(p, InputGate*) {
-          return p->wait();
-        }
-        KJ_CASE_ONEOF(c, kj::Own<CriticalSection>) {
-          return c->wait();
-        }
-      }
-      KJ_UNREACHABLE;
+    KJ_UNREACHABLE;
   }
-  KJ_UNREACHABLE;
 }
 
 InputGate::Lock InputGate::CriticalSection::succeeded() {
@@ -223,7 +247,7 @@ InputGate::Lock InputGate::CriticalSection::succeeded() {
 
   state = REPARENTED;
   auto result = KJ_ASSERT_NONNULL(kj::mv(parentLock));
-  parentLock = nullptr;
+  parentLock = kj::none;
   return result;
 }
 
@@ -253,15 +277,15 @@ void InputGate::setBroken(const kj::Exception& e) {
     waiter.fulfiller.reject(kj::cp(e));
     waiters.remove(waiter);
   }
-  KJ_IF_MAYBE(f, brokenState.tryGet<kj::Own<kj::PromiseFulfiller<void>>>()) {
-    f->get()->reject(kj::cp(e));
+  KJ_IF_SOME(f, brokenState.tryGet<kj::Own<kj::PromiseFulfiller<void>>>()) {
+    f.get()->reject(kj::cp(e));
   }
   brokenState = kj::cp(e);
 }
 
 InputGate& InputGate::CriticalSection::parentAsInputGate() {
   CriticalSection* ptr = this;
-  for(;;) {
+  for (;;) {
     KJ_SWITCH_ONEOF(ptr->parent) {
       KJ_CASE_ONEOF(p, InputGate*) {
         return *p;
@@ -281,10 +305,11 @@ InputGate& InputGate::CriticalSection::parentAsInputGate() {
 // =======================================================================================
 
 OutputGate::OutputGate(Hooks& hooks)
-    : hooks(hooks), pastLocksPromise(kj::Promise<void>(kj::READY_NOW).fork()) {}
+    : hooks(hooks),
+      pastLocksPromise(kj::Promise<void>(kj::READY_NOW).fork()) {}
 OutputGate::~OutputGate() noexcept(false) {}
 
-OutputGate::Hooks OutputGate::Hooks::DEFAULT;
+const OutputGate::Hooks OutputGate::Hooks::DEFAULT;
 
 kj::Own<kj::PromiseFulfiller<void>> OutputGate::lock() {
   auto paf = kj::newPromiseAndFulfiller<void>();
@@ -295,17 +320,16 @@ kj::Own<kj::PromiseFulfiller<void>> OutputGate::lock() {
 
 kj::Promise<void> OutputGate::wait() {
   hooks.outputGateWaiterAdded();
-  return pastLocksPromise.addBranch().attach(kj::defer([this]() {
-    hooks.outputGateWaiterRemoved();
-  }));
+  return pastLocksPromise.addBranch().attach(
+      kj::defer([this]() { hooks.outputGateWaiterRemoved(); }));
 }
 
 kj::Promise<void> OutputGate::onBroken() {
-  KJ_REQUIRE(!brokenState.is<kj::Own<kj::PromiseFulfiller<void>>>(),
-      "onBroken() can only be called once");
+  KJ_REQUIRE(
+      !brokenState.is<kj::Own<kj::PromiseFulfiller<void>>>(), "onBroken() can only be called once");
 
-  KJ_IF_MAYBE(e, brokenState.tryGet<kj::Exception>()) {
-    return kj::cp(*e);
+  KJ_IF_SOME(e, brokenState.tryGet<kj::Exception>()) {
+    return kj::cp(e);
   } else {
     auto paf = kj::newPromiseAndFulfiller<void>();
     brokenState = kj::mv(paf.fulfiller);
@@ -317,7 +341,11 @@ bool OutputGate::isBroken() {
   return brokenState.is<kj::Exception>();
 }
 
+namespace {
+
 void END_OUTPUT_LOCK_CANCELATION_STACK_START_WAITER_STACK() {}
+
+}  // namespace
 
 kj::Exception OutputGate::makeUnfulfilledException() {
   return kj::getDestructionReason(
@@ -329,8 +357,8 @@ kj::Exception OutputGate::makeUnfulfilledException() {
 void OutputGate::setBroken(const kj::Exception& e) {
   // We assume the exception is already propagated into `pastLocksPromise`, so all we need to do
   // is handle onBroken().
-  KJ_IF_MAYBE(f, brokenState.tryGet<kj::Own<kj::PromiseFulfiller<void>>>()) {
-    f->get()->reject(kj::cp(e));
+  KJ_IF_SOME(f, brokenState.tryGet<kj::Own<kj::PromiseFulfiller<void>>>()) {
+    f.get()->reject(kj::cp(e));
   }
   brokenState = kj::cp(e);
 }

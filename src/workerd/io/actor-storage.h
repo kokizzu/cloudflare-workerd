@@ -1,16 +1,16 @@
+// Copyright (c) 2022-2023 Cloudflare, Inc.
+// Licensed under the Apache 2.0 license found in the LICENSE file or at:
+//     https://opensource.org/licenses/Apache-2.0
+
 #pragma once
 
 #include <kj/common.h>
 #include <kj/string.h>
 
-#include <workerd/io/actor-storage.capnp.h>
-
 namespace workerd {
-class ActorStorageLimits {
 // This class wraps common values and functions for interacting durable object (actor) storage.
-public:
-  static constexpr size_t ADVERTISED_MAX_VALUE_SIZE = 128 * 1024;
-  static constexpr size_t ENFORCED_MAX_VALUE_SIZE = ADVERTISED_MAX_VALUE_SIZE + 34;
+class ActorStorageLimits {
+ public:
   // We grant some extra cushion on top of the advertised max size in order
   // to avoid penalizing people for pushing right up against the advertised size.
   // The v8 serialization method we use can add a few extra bytes for its type tag
@@ -24,11 +24,14 @@ public:
   // then started writing v8 serialization headers, which are 2 bytes, and didn't
   // want to stop accepting values that we accepted before writing headers.
 
+  static constexpr size_t ADVERTISED_MAX_VALUE_SIZE = 128 * 1024;
+  static constexpr size_t ENFORCED_MAX_VALUE_SIZE = ADVERTISED_MAX_VALUE_SIZE + 34;
+
   static constexpr size_t MAX_KEY_SIZE = 2048;
 
   static void checkMaxKeySize(kj::StringPtr key);
-  static void checkMaxValueSize(kj::StringPtr key, kj::ArrayPtr<kj::byte> value);
+  static void checkMaxValueSize(kj::StringPtr key, kj::ArrayPtr<const kj::byte> value);
   static void checkMaxPairsCount(size_t count);
 };
 
-} // namespace workerd
+}  // namespace workerd

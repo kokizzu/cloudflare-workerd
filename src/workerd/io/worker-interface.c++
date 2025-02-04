@@ -3,114 +3,117 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 #include "worker-interface.h"
+
 #include <kj/debug.h>
-#include <workerd/util/own-util.h>
+
+using kj::byte;
+using kj::uint;
 
 namespace workerd {
 
-class PromisedWorkerInterface final: public kj::Refcounted, public WorkerInterface {
-  // A WorkerInterface that delays requests until some promise resolves, then forwards them to the
-  // interface the promise resolved to.
+namespace {
+// A WorkerInterface that delays requests until some promise resolves, then forwards them to the
+// interface the promise resolved to.
+class PromisedWorkerInterface final: public WorkerInterface {
+ public:
+  PromisedWorkerInterface(kj::Promise<kj::Own<WorkerInterface>> promise)
+      : promise(promise.then([this](kj::Own<WorkerInterface> result) { worker = kj::mv(result); })
+                    .fork()) {}
 
-public:
-  PromisedWorkerInterface(kj::TaskSet& waitUntilTasks,
-                          kj::Promise<kj::Own<WorkerInterface>> promise)
-      : waitUntilTasks(waitUntilTasks),
-        promise(promise.then([this](kj::Own<WorkerInterface> result) {
-          worker = kj::mv(result);
-        }).fork()) {}
-
-  kj::Promise<void> request(
-      kj::HttpMethod method, kj::StringPtr url, const kj::HttpHeaders& headers,
-      kj::AsyncInputStream& requestBody, Response& response) override {
-    KJ_IF_MAYBE(w, worker) {
-      return w->get()->request(method, url, headers, requestBody, response);
+  kj::Promise<void> request(kj::HttpMethod method,
+      kj::StringPtr url,
+      const kj::HttpHeaders& headers,
+      kj::AsyncInputStream& requestBody,
+      Response& response) override {
+    KJ_IF_SOME(w, worker) {
+      co_await w->request(method, url, headers, requestBody, response);
     } else {
-      return promise.addBranch().then([this,method,url,&headers,&requestBody,&response]() {
-        return KJ_ASSERT_NONNULL(worker)
-            ->request(method, url, headers, requestBody, response);
-      });
+      co_await promise;
+      co_await KJ_ASSERT_NONNULL(worker)->request(method, url, headers, requestBody, response);
     }
   }
 
-  kj::Promise<void> connect(kj::StringPtr host, const kj::HttpHeaders& headers,
-      kj::AsyncIoStream& connection, ConnectResponse& response) override {
-    KJ_IF_MAYBE(w, worker) {
-      return w->get()->connect(host, headers, connection, response);
+  kj::Promise<void> connect(kj::StringPtr host,
+      const kj::HttpHeaders& headers,
+      kj::AsyncIoStream& connection,
+      ConnectResponse& response,
+      kj::HttpConnectSettings settings) override {
+    KJ_IF_SOME(w, worker) {
+      co_await w->connect(host, headers, connection, response, kj::mv(settings));
     } else {
-      return promise.addBranch().then([this, host, &headers, &connection, &response]() {
-        return KJ_ASSERT_NONNULL(worker)->connect(host, headers, connection, response);
-      });
+      co_await promise;
+      co_await KJ_ASSERT_NONNULL(worker)->connect(
+          host, headers, connection, response, kj::mv(settings));
     }
   }
 
-  void prewarm(kj::StringPtr url) override {
-    KJ_IF_MAYBE(w, worker) {
-      w->get()->prewarm(url);
+  kj::Promise<void> prewarm(kj::StringPtr url) override {
+    KJ_IF_SOME(w, worker) {
+      co_return co_await w->prewarm(url);
     } else {
-      waitUntilTasks.add(promise.addBranch().then([this, url=kj::str(url)]() mutable {
-        KJ_ASSERT_NONNULL(worker)->prewarm(url);
-      }).attach(kj::addRef(*this)));
+      co_await promise;
+      co_return co_await KJ_ASSERT_NONNULL(worker)->prewarm(url);
     }
   }
 
   kj::Promise<ScheduledResult> runScheduled(kj::Date scheduledTime, kj::StringPtr cron) override {
-    KJ_IF_MAYBE(w, worker) {
-      return w->get()->runScheduled(scheduledTime, cron);
+    KJ_IF_SOME(w, worker) {
+      co_return co_await w->runScheduled(scheduledTime, cron);
     } else {
-      return promise.addBranch().then([this, scheduledTime, cron]() mutable {
-        return KJ_ASSERT_NONNULL(worker)->runScheduled(scheduledTime, cron);
-      });
+      co_await promise;
+      co_return co_await KJ_ASSERT_NONNULL(worker)->runScheduled(scheduledTime, cron);
     }
   }
 
-  kj::Promise<AlarmResult> runAlarm(kj::Date scheduledTime) override {
-    KJ_IF_MAYBE(w, worker) {
-      return w->get()->runAlarm(scheduledTime);
+  kj::Promise<AlarmResult> runAlarm(kj::Date scheduledTime, uint32_t retryCount) override {
+    KJ_IF_SOME(w, worker) {
+      co_return co_await w->runAlarm(scheduledTime, retryCount);
     } else {
-      return promise.addBranch().then([this, scheduledTime]() mutable {
-        return KJ_ASSERT_NONNULL(worker)->runAlarm(scheduledTime);
-      });
+      co_await promise;
+      co_return co_await KJ_ASSERT_NONNULL(worker)->runAlarm(scheduledTime, retryCount);
     }
   }
 
   kj::Promise<CustomEvent::Result> customEvent(kj::Own<CustomEvent> event) override {
-    KJ_IF_MAYBE(w, worker) {
-      return w->get()->customEvent(kj::mv(event));
+    KJ_IF_SOME(w, worker) {
+      co_return co_await w->customEvent(kj::mv(event));
     } else {
-      return promise.addBranch().then([this, event = kj::mv(event)]() mutable {
-        return KJ_ASSERT_NONNULL(worker)->customEvent(kj::mv(event));
-      });
+      co_await promise;
+      co_return co_await KJ_ASSERT_NONNULL(worker)->customEvent(kj::mv(event));
     }
   }
 
-private:
-  kj::TaskSet& waitUntilTasks;
+ private:
   kj::ForkedPromise<void> promise;
   kj::Maybe<kj::Own<WorkerInterface>> worker;
 };
+}  // namespace
 
-kj::Own<WorkerInterface> newPromisedWorkerInterface(
-    kj::TaskSet& waitUntilTasks, kj::Promise<kj::Own<WorkerInterface>> promise) {
-  return kj::refcounted<PromisedWorkerInterface>(waitUntilTasks, kj::mv(promise));
+kj::Own<WorkerInterface> newPromisedWorkerInterface(kj::Promise<kj::Own<WorkerInterface>> promise) {
+  return kj::heap<PromisedWorkerInterface>(kj::mv(promise));
 }
 
 kj::Own<kj::HttpClient> asHttpClient(kj::Own<WorkerInterface> workerInterface) {
   return kj::newHttpClient(*workerInterface).attach(kj::mv(workerInterface));
 }
 
+// =======================================================================================
+namespace {
+// A Revocable WebSocket wrapper, revoked when revokeProm rejects
 class RevocableWebSocket final: public kj::WebSocket {
-  // A Revocable WebSocket wrapper, revoked when revokeProm rejects
-public:
+ public:
   RevocableWebSocket(kj::Own<WebSocket> ws, kj::Promise<void> revokeProm)
-      : ws(kj::mv(ws)), revokeProm(revokeProm.catch_([this](kj::Exception&& e) -> kj::Promise<void> {
-        canceler.cancel(kj::cp(e));
-        KJ_IF_MAYBE(ws, this->ws.tryGet<kj::Own<kj::WebSocket>>()) {
-          (*ws)->abort();
-        }
-        this->ws = kj::mv(e);
-        return kj::READY_NOW;
-      }).eagerlyEvaluate(nullptr)) {}
+      : ws(kj::mv(ws)),
+        revokeProm(revokeProm
+                       .catch_([this](kj::Exception&& e) -> kj::Promise<void> {
+                         canceler.cancel(kj::cp(e));
+                         KJ_IF_SOME(ws, this->ws.tryGet<kj::Own<kj::WebSocket>>()) {
+                           (ws)->abort();
+                         }
+                         this->ws = kj::mv(e);
+                         return kj::READY_NOW;
+                       })
+                       .eagerlyEvaluate(nullptr)) {}
 
   kj::Promise<void> send(kj::ArrayPtr<const byte> message) override {
     return wrap<void>(getInner().send(message));
@@ -123,16 +126,15 @@ public:
     return wrap<void>(getInner().close(code, reason));
   }
 
-  kj::Promise<void> disconnect() override {
-    KJ_IF_MAYBE(ws, this->ws.tryGet<kj::Own<kj::WebSocket>>()) {
-      return wrap<void>((*ws)->disconnect());
+  void disconnect() override {
+    KJ_IF_SOME(ws, this->ws.tryGet<kj::Own<kj::WebSocket>>()) {
+      return (ws)->disconnect();
     }
-    return kj::READY_NOW;
   }
 
   void abort() override {
-    KJ_IF_MAYBE(ws, this->ws.tryGet<kj::Own<kj::WebSocket>>()) {
-      return (*ws)->abort();
+    KJ_IF_SOME(ws, this->ws.tryGet<kj::Own<kj::WebSocket>>()) {
+      return (ws)->abort();
     }
   }
 
@@ -152,11 +154,19 @@ public:
     return wrap<void>(other.pumpTo(getInner()));
   }
 
-  uint64_t sentByteCount() override { return 0; }
-  uint64_t receivedByteCount() override { return 0; }
+  kj::Maybe<kj::String> getPreferredExtensions(ExtensionsContext ctx) override {
+    return getInner().getPreferredExtensions(ctx);
+  };
 
-private:
-  template<typename T>
+  uint64_t sentByteCount() override {
+    return 0;
+  }
+  uint64_t receivedByteCount() override {
+    return 0;
+  }
+
+ private:
+  template <typename T>
   kj::Promise<T> wrap(kj::Promise<T> prom) {
     // just to fix the revocation promise return type, serves no purpose otherwise
     return canceler.wrap(kj::mv(prom));
@@ -179,16 +189,18 @@ private:
   kj::Canceler canceler;
 };
 
-class RevocableHttpResponse final : public kj::HttpService::Response {
-  // A HttpResponse that is revokable (including websocket connections started as part of the
-  // response)
-public:
-  RevocableHttpResponse(kj::HttpService::Response& inner, kj::Promise<void> revokeProm)
-      : inner(inner), revokeProm(revokeProm.fork()) {}
+// A HttpResponse that can revoke long-running websocket connections started as part of the
+// response. Ordinary HTTP requests are not revoked.
+class RevocableWebSocketHttpResponse final: public kj::HttpService::Response {
+ public:
+  RevocableWebSocketHttpResponse(kj::HttpService::Response& inner, kj::Promise<void> revokeProm)
+      : inner(inner),
+        revokeProm(revokeProm.fork()) {}
 
-  kj::Own<kj::AsyncOutputStream> send(
-      uint statusCode, kj::StringPtr statusText, const kj::HttpHeaders& headers,
-      kj::Maybe<uint64_t> expectedBodySize = nullptr) override {
+  kj::Own<kj::AsyncOutputStream> send(uint statusCode,
+      kj::StringPtr statusText,
+      const kj::HttpHeaders& headers,
+      kj::Maybe<uint64_t> expectedBodySize = kj::none) override {
     return inner.send(statusCode, statusText, headers, expectedBodySize);
   }
 
@@ -196,51 +208,86 @@ public:
     return kj::heap<RevocableWebSocket>(inner.acceptWebSocket(headers), revokeProm.addBranch());
   }
 
-private:
+ private:
   kj::HttpService::Response& inner;
   kj::ForkedPromise<void> revokeProm;
 };
 
-kj::Promise<void> RevocableWorkerInterface::request(
-    kj::HttpMethod method, kj::StringPtr url, const kj::HttpHeaders& headers,
-    kj::AsyncInputStream& requestBody, kj::HttpService::Response& response) {
-  auto wrappedResponse = kj::heap<RevocableHttpResponse>(response, revokeProm.addBranch());
+// A WorkerInterface that cancels WebSockets when revokeProm is rejected.
+// Currently only supports cancelling for upgrades.
+class RevocableWebSocketWorkerInterface final: public WorkerInterface {
+ public:
+  RevocableWebSocketWorkerInterface(WorkerInterface& worker, kj::Promise<void> revokeProm);
+  kj::Promise<void> request(kj::HttpMethod method,
+      kj::StringPtr url,
+      const kj::HttpHeaders& headers,
+      kj::AsyncInputStream& requestBody,
+      Response& response) override;
+  kj::Promise<void> connect(kj::StringPtr host,
+      const kj::HttpHeaders& headers,
+      kj::AsyncIoStream& connection,
+      ConnectResponse& response,
+      kj::HttpConnectSettings settings) override;
+  kj::Promise<void> prewarm(kj::StringPtr url) override;
+  kj::Promise<ScheduledResult> runScheduled(kj::Date scheduledTime, kj::StringPtr cron) override;
+  kj::Promise<AlarmResult> runAlarm(kj::Date scheduledTime, uint32_t retryCount) override;
+  kj::Promise<CustomEvent::Result> customEvent(kj::Own<CustomEvent> event) override;
+
+ private:
+  WorkerInterface& worker;
+  kj::ForkedPromise<void> revokeProm;
+};
+
+kj::Promise<void> RevocableWebSocketWorkerInterface::request(kj::HttpMethod method,
+    kj::StringPtr url,
+    const kj::HttpHeaders& headers,
+    kj::AsyncInputStream& requestBody,
+    kj::HttpService::Response& response) {
+  auto wrappedResponse = kj::heap<RevocableWebSocketHttpResponse>(response, revokeProm.addBranch());
   return worker.request(method, url, headers, requestBody, *wrappedResponse)
       .attach(kj::mv(wrappedResponse));
 }
 
-kj::Promise<void> RevocableWorkerInterface::connect(kj::StringPtr host, const kj::HttpHeaders& headers,
-    kj::AsyncIoStream& connection, ConnectResponse& response) {
-  KJ_UNIMPLEMENTED("TODO(someday): RevocableWorkerInterface::connect() should be implemented to "
+kj::Promise<void> RevocableWebSocketWorkerInterface::connect(kj::StringPtr host,
+    const kj::HttpHeaders& headers,
+    kj::AsyncIoStream& connection,
+    ConnectResponse& response,
+    kj::HttpConnectSettings settings) {
+  KJ_UNIMPLEMENTED(
+      "TODO(someday): RevocableWebSocketWorkerInterface::connect() should be implemented to "
       "disconnect long-lived connections similar to how it treats WebSockets");
 }
 
-RevocableWorkerInterface::RevocableWorkerInterface(WorkerInterface& worker,
-    kj::Promise<void> revokeProm)
-    : worker(worker), revokeProm(revokeProm.fork()) {}
+RevocableWebSocketWorkerInterface::RevocableWebSocketWorkerInterface(
+    WorkerInterface& worker, kj::Promise<void> revokeProm)
+    : worker(worker),
+      revokeProm(revokeProm.fork()) {}
 
-void RevocableWorkerInterface::prewarm(kj::StringPtr url) {
-  worker.prewarm(url);
+kj::Promise<void> RevocableWebSocketWorkerInterface::prewarm(kj::StringPtr url) {
+  return worker.prewarm(url);
 }
 
-kj::Promise<WorkerInterface::ScheduledResult> RevocableWorkerInterface::runScheduled(
-    kj::Date scheduledTime,
-    kj::StringPtr cron) {
+kj::Promise<WorkerInterface::ScheduledResult> RevocableWebSocketWorkerInterface::runScheduled(
+    kj::Date scheduledTime, kj::StringPtr cron) {
   return worker.runScheduled(scheduledTime, cron);
 }
 
-kj::Promise<WorkerInterface::AlarmResult> RevocableWorkerInterface::runAlarm(kj::Date scheduledTime) {
-  return worker.runAlarm(scheduledTime);
+kj::Promise<WorkerInterface::AlarmResult> RevocableWebSocketWorkerInterface::runAlarm(
+    kj::Date scheduledTime, uint32_t retryCount) {
+  return worker.runAlarm(scheduledTime, retryCount);
 }
 
-kj::Promise<WorkerInterface::CustomEvent::Result>
-    RevocableWorkerInterface::customEvent(kj::Own<CustomEvent> event) {
+kj::Promise<WorkerInterface::CustomEvent::Result> RevocableWebSocketWorkerInterface::customEvent(
+    kj::Own<CustomEvent> event) {
   return worker.customEvent(kj::mv(event));
 }
 
-kj::Own<RevocableWorkerInterface> newRevocableWorkerInterface(kj::Own<WorkerInterface> worker,
-    kj::Promise<void> revokeProm) {
-  return kj::heap<RevocableWorkerInterface>(*worker, kj::mv(revokeProm)).attach(kj::mv(worker));
+}  // namespace
+
+kj::Own<WorkerInterface> newRevocableWebSocketWorkerInterface(
+    kj::Own<WorkerInterface> worker, kj::Promise<void> revokeProm) {
+  return kj::heap<RevocableWebSocketWorkerInterface>(*worker, kj::mv(revokeProm))
+      .attach(kj::mv(worker));
 }
 
 // =======================================================================================
@@ -248,29 +295,35 @@ kj::Own<RevocableWorkerInterface> newRevocableWorkerInterface(kj::Own<WorkerInte
 namespace {
 
 class ErrorWorkerInterface final: public WorkerInterface {
-public:
+ public:
   ErrorWorkerInterface(kj::Exception&& exception): exception(exception) {}
 
-  kj::Promise<void> request(
-      kj::HttpMethod method, kj::StringPtr url, const kj::HttpHeaders& headers,
-      kj::AsyncInputStream& requestBody, Response& response) override {
+  kj::Promise<void> request(kj::HttpMethod method,
+      kj::StringPtr url,
+      const kj::HttpHeaders& headers,
+      kj::AsyncInputStream& requestBody,
+      Response& response) override {
     kj::throwFatalException(kj::mv(exception));
   }
 
-  kj::Promise<void> connect(kj::StringPtr host, const kj::HttpHeaders& headers,
-      kj::AsyncIoStream& connection, ConnectResponse& response) override {
+  kj::Promise<void> connect(kj::StringPtr host,
+      const kj::HttpHeaders& headers,
+      kj::AsyncIoStream& connection,
+      ConnectResponse& response,
+      kj::HttpConnectSettings settings) override {
     kj::throwFatalException(kj::mv(exception));
   }
 
-  void prewarm(kj::StringPtr url) override {
+  kj::Promise<void> prewarm(kj::StringPtr url) override {
     // ignore
+    return kj::READY_NOW;
   }
 
   kj::Promise<ScheduledResult> runScheduled(kj::Date scheduledTime, kj::StringPtr cron) override {
     kj::throwFatalException(kj::mv(exception));
   }
 
-  kj::Promise<AlarmResult> runAlarm(kj::Date scheduledTime) override {
+  kj::Promise<AlarmResult> runAlarm(kj::Date scheduledTime, uint32_t retryCount) override {
     kj::throwFatalException(kj::mv(exception));
   }
 
@@ -278,7 +331,7 @@ public:
     kj::throwFatalException(kj::mv(exception));
   }
 
-private:
+ private:
   kj::Exception exception;
 };
 
@@ -291,70 +344,109 @@ kj::Own<WorkerInterface> WorkerInterface::fromException(kj::Exception&& e) {
 // =======================================================================================
 
 RpcWorkerInterface::RpcWorkerInterface(capnp::HttpOverCapnpFactory& httpOverCapnpFactory,
-                                       capnp::ByteStreamFactory& byteStreamFactory,
-                                       kj::TaskSet& waitUntilTasks,
-                                       rpc::EventDispatcher::Client dispatcher)
+    capnp::ByteStreamFactory& byteStreamFactory,
+    rpc::EventDispatcher::Client dispatcher)
     : httpOverCapnpFactory(httpOverCapnpFactory),
       byteStreamFactory(byteStreamFactory),
-      waitUntilTasks(waitUntilTasks),
       dispatcher(kj::mv(dispatcher)) {}
 
-kj::Promise<void> RpcWorkerInterface::request(
-    kj::HttpMethod method, kj::StringPtr url, const kj::HttpHeaders& headers,
-    kj::AsyncInputStream& requestBody, Response& response) {
+kj::Promise<void> RpcWorkerInterface::request(kj::HttpMethod method,
+    kj::StringPtr url,
+    const kj::HttpHeaders& headers,
+    kj::AsyncInputStream& requestBody,
+    Response& response) {
   auto inner = httpOverCapnpFactory.capnpToKj(dispatcher.getHttpServiceRequest().send().getHttp());
   auto promise = inner->request(method, url, headers, requestBody, response);
   return promise.attach(kj::mv(inner));
 }
 
-kj::Promise<void> RpcWorkerInterface::connect(
-    kj::StringPtr host, const kj::HttpHeaders& headers, kj::AsyncIoStream& connection,
-    ConnectResponse& tunnel) {
+kj::Promise<void> RpcWorkerInterface::connect(kj::StringPtr host,
+    const kj::HttpHeaders& headers,
+    kj::AsyncIoStream& connection,
+    ConnectResponse& tunnel,
+    kj::HttpConnectSettings settings) {
   auto inner = httpOverCapnpFactory.capnpToKj(dispatcher.getHttpServiceRequest().send().getHttp());
-  auto promise = inner->connect(host, headers, connection, tunnel);
+  auto promise = inner->connect(host, headers, connection, tunnel, kj::mv(settings));
   return promise.attach(kj::mv(inner));
 }
 
-
-void RpcWorkerInterface::prewarm(kj::StringPtr url) {
-  auto req = dispatcher.prewarmRequest(
-      capnp::MessageSize { url.size() / sizeof(capnp::word) + 4, 0 });
+kj::Promise<void> RpcWorkerInterface::prewarm(kj::StringPtr url) {
+  auto req = dispatcher.prewarmRequest(capnp::MessageSize{url.size() / sizeof(capnp::word) + 4, 0});
   req.setUrl(url);
-  waitUntilTasks.add(req.send().ignoreResult());
+  return req.send().ignoreResult();
 }
 
 kj::Promise<WorkerInterface::ScheduledResult> RpcWorkerInterface::runScheduled(
-    kj::Date scheduledTime,
-    kj::StringPtr cron) {
+    kj::Date scheduledTime, kj::StringPtr cron) {
   auto req = dispatcher.runScheduledRequest();
   req.setScheduledTime((scheduledTime - kj::UNIX_EPOCH) / kj::SECONDS);
   req.setCron(cron);
   return req.send().then([](auto resp) {
     auto respResult = resp.getResult();
-    return WorkerInterface::ScheduledResult {
-      .retry = respResult.getRetry(),
-      .outcome = respResult.getOutcome()
-    };
+    return WorkerInterface::ScheduledResult{
+      .retry = respResult.getRetry(), .outcome = respResult.getOutcome()};
   });
 }
 
-kj::Promise<WorkerInterface::AlarmResult> RpcWorkerInterface::runAlarm(kj::Date scheduledTime) {
+kj::Promise<WorkerInterface::AlarmResult> RpcWorkerInterface::runAlarm(
+    kj::Date scheduledTime, uint32_t retryCount) {
   auto req = dispatcher.runAlarmRequest();
   req.setScheduledTime((scheduledTime - kj::UNIX_EPOCH) / kj::MILLISECONDS);
+  req.setRetryCount(retryCount);
   return req.send().then([](auto resp) {
     auto respResult = resp.getResult();
-    return WorkerInterface::AlarmResult {
-      .retry = respResult.getRetry(),
+    return WorkerInterface::AlarmResult{.retry = respResult.getRetry(),
       .retryCountsAgainstLimit = respResult.getRetryCountsAgainstLimit(),
-      .outcome = respResult.getOutcome()
-    };
+      .outcome = respResult.getOutcome()};
   });
 }
 
-kj::Promise<WorkerInterface::CustomEvent::Result>
-    RpcWorkerInterface::customEvent(kj::Own<CustomEvent> event) {
-  return event->sendRpc(httpOverCapnpFactory, byteStreamFactory, waitUntilTasks, dispatcher);
+kj::Promise<WorkerInterface::CustomEvent::Result> RpcWorkerInterface::customEvent(
+    kj::Own<CustomEvent> event) {
+  return event->sendRpc(httpOverCapnpFactory, byteStreamFactory, dispatcher).attach(kj::mv(event));
 }
 
-} // namespace workerd
+// ======================================================================================
+WorkerInterface::AlarmFulfiller::AlarmFulfiller(
+    kj::Own<kj::PromiseFulfiller<AlarmResult>> fulfiller)
+    : maybeFulfiller(kj::mv(fulfiller)) {}
 
+WorkerInterface::AlarmFulfiller::~AlarmFulfiller() noexcept(false) {
+  KJ_IF_SOME(fulfiller, getFulfiller()) {
+    fulfiller.reject(KJ_EXCEPTION(FAILED, "AlarmFulfiller destroyed without resolution"));
+  }
+}
+
+void WorkerInterface::AlarmFulfiller::fulfill(const AlarmResult& result) {
+  KJ_IF_SOME(fulfiller, getFulfiller()) {
+    fulfiller.fulfill(kj::cp(result));
+  }
+}
+
+void WorkerInterface::AlarmFulfiller::reject(const kj::Exception& e) {
+  KJ_IF_SOME(fulfiller, getFulfiller()) {
+    fulfiller.reject(kj::cp(e));
+  }
+}
+
+void WorkerInterface::AlarmFulfiller::cancel() {
+  KJ_IF_SOME(fulfiller, getFulfiller()) {
+    fulfiller.fulfill(AlarmResult{
+      .retry = false,
+      .outcome = EventOutcome::CANCELED,
+    });
+  }
+}
+
+kj::Maybe<kj::PromiseFulfiller<WorkerInterface::AlarmResult>&> WorkerInterface::AlarmFulfiller::
+    getFulfiller() {
+  KJ_IF_SOME(fulfiller, maybeFulfiller) {
+    if (fulfiller.get()->isWaiting()) {
+      return *fulfiller;
+    }
+  }
+
+  return kj::none;
+}
+
+}  // namespace workerd

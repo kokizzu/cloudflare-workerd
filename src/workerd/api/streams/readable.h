@@ -4,8 +4,7 @@
 
 #pragma once
 
-#include "internal.h"
-#include "standard.h"
+#include "common.h"
 #include <kj/function.h>
 
 namespace workerd::api {
@@ -13,7 +12,7 @@ namespace workerd::api {
 class ReadableStreamDefaultReader;
 class ReadableStreamBYOBReader;
 
-class ReaderImpl {
+class ReaderImpl final {
 public:
   ReaderImpl(ReadableStreamController::Reader& reader);
 
@@ -36,9 +35,12 @@ public:
 
   void visitForGc(jsg::GcVisitor& visitor);
 
+  kj::StringPtr jsgGetMemoryName() const;
+  size_t jsgGetMemorySelfSize() const;
+  void jsgGetMemoryInfo(jsg::MemoryTracker& tracker) const;
+
 private:
   struct Initial {};
-  using Attached = jsg::Ref<ReadableStream>;
   // While a Reader is attached to a ReadableStream, it holds a strong reference to the
   // ReadableStream to prevent it from being GC'd so long as the Reader is available.
   // Once the reader is closed, released, or GC'd the reference to the ReadableStream
@@ -46,8 +48,10 @@ private:
   // it being held anywhere. If the reader is still attached to the ReadableStream when
   // it is destroyed, the ReadableStream's reference to the reader is cleared but the
   // ReadableStream remains in the "reader locked" state, per the spec.
+  using Attached = jsg::Ref<ReadableStream>;
   struct Released {};
 
+  kj::Maybe<IoContext&> ioContext;
   ReadableStreamController::Reader& reader;
 
   kj::OneOf<Initial, Attached, StreamStates::Closed, Released> state = Initial();
@@ -97,6 +101,10 @@ public:
 
   inline bool isByteOriented() const override { return false; }
 
+  void visitForMemoryInfo(jsg::MemoryTracker& tracker) const {
+    tracker.trackField("impl", impl);
+  }
+
 private:
   ReaderImpl impl;
 
@@ -116,14 +124,15 @@ public:
 
   jsg::MemoizedIdentity<jsg::Promise<void>>& getClosed();
   jsg::Promise<void> cancel(jsg::Lock& js, jsg::Optional<v8::Local<v8::Value>> reason);
-  jsg::Promise<ReadResult> read(
-      jsg::Lock& js,
-      v8::Local<v8::ArrayBufferView> byobBuffer,
-      CompatibilityFlags::Reader featureFlags);
 
-  jsg::Promise<ReadResult> readAtLeast(jsg::Lock& js,
-                                        int minBytes,
-                                        v8::Local<v8::ArrayBufferView> byobBuffer);
+  struct ReadableStreamBYOBReaderReadOptions {
+    jsg::Optional<int> min;
+    JSG_STRUCT(min);
+  };
+
+  jsg::Promise<ReadResult> read(jsg::Lock& js, v8::Local<v8::ArrayBufferView> byobBuffer,
+      jsg::Optional<ReadableStreamBYOBReaderReadOptions> options = kj::none);
+
   // Non-standard extension so that reads can specify a minimum number of bytes to read. It's a
   // struct so that we could eventually add things like timeouts if we need to. Since there's no
   // existing spec that's a leading contendor, this is behind a different method name to avoid
@@ -131,6 +140,9 @@ public:
   // the underlying stream is closed/errors out. In all cases the read result is either
   // {value: theChunk, done: false} or {value: undefined, done: true} as with read.
   // TODO(soon): Like fetch() and Cache.match(), readAtLeast() returns a promise for a V8 object.
+  jsg::Promise<ReadResult> readAtLeast(jsg::Lock& js,
+                                        int minBytes,
+                                        v8::Local<v8::ArrayBufferView> byobBuffer);
 
   void releaseLock(jsg::Lock& js);
 
@@ -144,8 +156,8 @@ public:
     JSG_METHOD(read);
     JSG_METHOD(releaseLock);
 
-    JSG_METHOD(readAtLeast);
     // Non-standard extension that should only apply to BYOB byte streams.
+    JSG_METHOD(readAtLeast);
 
     JSG_TS_OVERRIDE(ReadableStreamBYOBReader {
       read<T extends ArrayBufferView>(view: T): Promise<ReadableStreamReadResult<T>>;
@@ -165,6 +177,10 @@ public:
 
   inline bool isByteOriented() const override { return true; }
 
+  void visitForMemoryInfo(jsg::MemoryTracker& tracker) const {
+    tracker.trackField("impl", impl);
+  }
+
 private:
   ReaderImpl impl;
 
@@ -175,6 +191,7 @@ class ReadableStream: public jsg::Object {
 private:
 
   struct AsyncIteratorState {
+    kj::Maybe<IoContext&> ioContext;
     jsg::Ref<ReadableStreamDefaultReader> reader;
     bool preventCancel;
   };
@@ -189,39 +206,37 @@ private:
       jsg::Optional<jsg::Value> value);
 
 public:
-  using Controller = kj::OneOf<kj::Own<ReadableStreamInternalController>,
-                               kj::Own<ReadableStreamJsController>>;
-
   explicit ReadableStream(IoContext& ioContext,
                           kj::Own<ReadableStreamSource> source);
 
-  explicit ReadableStream(Controller controller);
+  explicit ReadableStream(kj::Own<ReadableStreamController> controller);
 
   ReadableStreamController& getController();
 
-  jsg::Ref<ReadableStream> addRef() { return JSG_THIS; }
+  jsg::Ref<ReadableStream> addRef();
 
-  bool isDisturbed() { return getController().isDisturbed(); }
+  bool isDisturbed();
 
   // ---------------------------------------------------------------------------
   // JS interface
 
-  static jsg::Ref<ReadableStream> constructor(
-      jsg::Lock& js,
-      jsg::Optional<UnderlyingSource> underlyingSource,
-      jsg::Optional<StreamQueuingStrategy> queuingStrategy,
-      CompatibilityFlags::Reader flags);
   // Creates a new JS-backed ReadableStream using the provided source and strategy.
   // We use v8::Local<v8::Object>'s here instead of jsg structs because we need
   // to preserve the object references within the implementation.
+  static jsg::Ref<ReadableStream> constructor(
+      jsg::Lock& js,
+      jsg::Optional<UnderlyingSource> underlyingSource,
+      jsg::Optional<StreamQueuingStrategy> queuingStrategy);
 
-  bool isLocked() { return getController().isLockedToReader(); }
+  static jsg::Ref<ReadableStream> from(jsg::Lock& js, jsg::AsyncGenerator<jsg::Value> generator);
 
-  jsg::Promise<void> cancel(jsg::Lock& js, jsg::Optional<v8::Local<v8::Value>> reason);
+  bool isLocked();
+
   // Closes the stream. All present and future read requests are fulfilled with successful empty
   // results. `reason` will be passed to the underlying source's cancel algorithm -- if this
   // readable stream is one side of a transform stream, then its cancel algorithm causes the
   // transform's writable side to become errored with `reason`.
+  jsg::Promise<void> cancel(jsg::Lock& js, jsg::Optional<v8::Local<v8::Value>> reason);
 
   using Reader = kj::OneOf<jsg::Ref<ReadableStreamDefaultReader>,
                            jsg::Ref<ReadableStreamBYOBReader>>;
@@ -238,8 +253,8 @@ public:
 
   Reader getReader(jsg::Lock& js, jsg::Optional<GetReaderOptions> options);
 
+  // Options specifically for the values() function.
   struct ValuesOptions {
-    // Options specifically for the values() function.
     jsg::Optional<bool> preventCancel = false;
     JSG_STRUCT(preventCancel);
   };
@@ -272,9 +287,13 @@ public:
       jsg::Ref<WritableStream> destination,
       jsg::Optional<PipeToOptions> options);
 
-  kj::Array<jsg::Ref<ReadableStream>> tee(jsg::Lock& js);
   // Locks the stream and returns a pair of two new ReadableStreams, each of which read the same
   // data as this ReadableStream would.
+  kj::Array<jsg::Ref<ReadableStream>> tee(jsg::Lock& js);
+
+  jsg::JsString inspectState(jsg::Lock& js);
+  bool inspectSupportsBYOB();
+  jsg::Optional<uint64_t> inspectLength();
 
   JSG_RESOURCE_TYPE(ReadableStream, CompatibilityFlags::Reader flags) {
     if (flags.getJsgPropertyOnPrototypeTemplate()) {
@@ -288,6 +307,11 @@ public:
     JSG_METHOD(pipeTo);
     JSG_METHOD(tee);
     JSG_METHOD(values);
+    JSG_STATIC_METHOD(from);
+
+    JSG_INSPECT_PROPERTY(state, inspectState);
+    JSG_INSPECT_PROPERTY(supportsBYOB, inspectSupportsBYOB);
+    JSG_INSPECT_PROPERTY(length, inspectLength);
 
     JSG_ASYNC_ITERABLE(values);
 
@@ -326,17 +350,16 @@ public:
         [Symbol.asyncIterator](options?: ReadableStreamValuesOptions): AsyncIterableIterator<R>;
       });
     }
+    // Replace ReadableStream class with an interface and const, so we can have
+    // two constructors with differing type parameters for byte-oriented and
+    // value-oriented streams.
     JSG_TS_OVERRIDE(const ReadableStream: {
       prototype: ReadableStream;
       new (underlyingSource: UnderlyingByteSource, strategy?: QueuingStrategy<Uint8Array>): ReadableStream<Uint8Array>;
       new <R = any>(underlyingSource?: UnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
     });
-    // Replace ReadableStream class with an interface and const, so we can have
-    // two constructors with differing type parameters for byte-oriented and
-    // value-oriented streams.
   }
 
-  jsg::Ref<ReadableStream> detach(jsg::Lock& js);
   // Detaches this ReadableStream from it's underlying controller state, returning a
   // new ReadableStream instance that takes over the underlying state. This is used to
   // support the "create a proxy" of a ReadableStream algorithm in the streams spec
@@ -347,24 +370,44 @@ public:
   // ReadableStream that will take over ownership of the internal state of this one,
   // leaving this ReadableStream locked and disturbed so that it is no longer usable.
   // The name "detach" here is used in the sense of "detaching the internal state".
+  jsg::Ref<ReadableStream> detach(jsg::Lock& js, bool ignoreDisturbed=false);
 
   kj::Maybe<uint64_t> tryGetLength(StreamEncoding encoding);
 
-  kj::Promise<DeferredProxy<void>> pumpTo(jsg::Lock& js,
-                                          kj::Own<WritableStreamSink> sink,
-                                          bool end);
   // A potentially optimized version of pipe that sends this stream's data to the given
   // sink. The entire stream is consumed. The ReadableStream will be left locked and
   // disturbed and the DeferredProxy returned will take over ownership of the internal
   // state of the readable.
+  kj::Promise<DeferredProxy<void>> pumpTo(jsg::Lock& js,
+                                          kj::Own<WritableStreamSink> sink,
+                                          bool end);
+
+  // Initialises signalling mechanism for EOF detection. Returns a promise that will resolve when
+  // EOF is reached.
+  //
+  // This method should only be called once.
+  jsg::Promise<void> onEof(jsg::Lock& js);
+
+  // Used by ReadableStreamInternalController to signal EOF being reached. Can be called even if
+  // `onEof` wasn't called.
+  void signalEof(jsg::Lock& js);
+
+  void serialize(jsg::Lock& js, jsg::Serializer& serializer);
+  static jsg::Ref<ReadableStream> deserialize(
+      jsg::Lock& js, rpc::SerializationTag tag, jsg::Deserializer& deserializer);
+
+  JSG_SERIALIZABLE(rpc::SerializationTag::READABLE_STREAM);
+
+  void visitForMemoryInfo(jsg::MemoryTracker& tracker) const;
 
 private:
-  Controller controller;
-  kj::Maybe<jsg::Promise<void>> maybePipeThrough;
+  kj::Maybe<IoContext&> ioContext;
+  kj::Own<ReadableStreamController> controller;
 
-  void visitForGc(jsg::GcVisitor& visitor) {
-    visitor.visit(getController(), maybePipeThrough);
-  }
+  // Used to signal when this ReadableStream reads EOF. This signal is required for TCP sockets.
+  kj::Maybe<jsg::PromiseResolverPair<void>> eofResolverPair;
+
+  void visitForGc(jsg::GcVisitor& visitor);
 };
 
 struct QueuingStrategyInit {
@@ -375,9 +418,9 @@ struct QueuingStrategyInit {
 using QueuingStrategySizeFunction =
     jsg::Optional<uint32_t>(jsg::Optional<v8::Local<v8::Value>>);
 
+// Utility class defined by the streams spec that uses byteLength to calculate
+// backpressure changes.
 class ByteLengthQueuingStrategy: public jsg::Object {
-  // Utility class defined by the streams spec that uses byteLength to calculate
-  // backpressure changes.
 public:
   ByteLengthQueuingStrategy(QueuingStrategyInit init) : init(init) {}
 
@@ -393,10 +436,10 @@ public:
     JSG_READONLY_PROTOTYPE_PROPERTY(highWaterMark, getHighWaterMark);
     JSG_READONLY_PROTOTYPE_PROPERTY(size, getSize);
 
+    // QueuingStrategy requires the result of the size function to be defined
     JSG_TS_OVERRIDE(implements QueuingStrategy<ArrayBufferView> {
       get size(): (chunk?: any) => number;
     });
-    // QueuingStrategy requires the result of the size function to be defined
   }
 
 private:
@@ -405,9 +448,9 @@ private:
   QueuingStrategyInit init;
 };
 
+// Utility class defined by the streams spec that uses a fixed value of 1 to calculate
+// backpressure change
 class CountQueuingStrategy: public jsg::Object {
-  // Utility class defined by the streams spec that uses a fixed value of 1 to calculate
-  // backpressure changes.
 public:
   CountQueuingStrategy(QueuingStrategyInit init) : init(init) {}
 
@@ -423,10 +466,10 @@ public:
     JSG_READONLY_PROTOTYPE_PROPERTY(highWaterMark, getHighWaterMark);
     JSG_READONLY_PROTOTYPE_PROPERTY(size, getSize);
 
+    // QueuingStrategy requires the result of the size function to be defined
     JSG_TS_OVERRIDE(implements QueuingStrategy {
       get size(): (chunk?: any) => number;
     });
-    // QueuingStrategy requires the result of the size function to be defined
   }
 
 private:

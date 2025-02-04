@@ -9,12 +9,12 @@ namespace {
 
 V8System v8System;
 
-struct GeneratorContext: public Object {
+struct GeneratorContext: public Object, public ContextGlobal {
+
   uint generatorTest(Lock& js, Generator<kj::String> generator) {
 
-    KJ_DEFER(generator.forEach(js, [](auto& js, auto, auto&) {
-      KJ_FAIL_ASSERT("Should not have been called");
-    }));
+    KJ_DEFER(generator.forEach(
+        js, [](auto& js, auto, auto&) { KJ_FAIL_ASSERT("Should not have been called"); }));
 
     uint count = 0;
     auto ret = generator.forEach(js, [&count](auto& js, auto val, auto& context) {
@@ -28,9 +28,8 @@ struct GeneratorContext: public Object {
 
     // Moving the generator then accessing it doesn't crash anything.
     auto gen2 = kj::mv(generator);
-    gen2.forEach(js, [](auto& js, auto, auto&) {
-      KJ_FAIL_ASSERT("Should not actually be called");
-    });
+    gen2.forEach(
+        js, [](auto& js, auto, auto&) { KJ_FAIL_ASSERT("Should not actually be called"); });
 
     return count;
   }
@@ -51,7 +50,7 @@ struct GeneratorContext: public Object {
 
   uint sequenceOfSequenceTest(Lock& js, Sequence<Sequence<kj::String>> sequence) {
     uint count = 0;
-    for (auto& mem : sequence) {
+    for (auto& mem: sequence) {
       count += mem.size();
     }
     return count;
@@ -60,7 +59,8 @@ struct GeneratorContext: public Object {
   uint asyncGeneratorTest(Lock& js, AsyncGenerator<kj::String> generator) {
     uint count = 0;
     bool finished = false;
-    generator.forEach(js, [&count](auto& js, auto, auto& context) {
+    generator
+        .forEach(js, [&count](auto& js, auto, auto& context) {
       if (count == 1 && !context.isReturning()) {
         context.return_(js, kj::str("foo"));
       } else {
@@ -77,7 +77,7 @@ struct GeneratorContext: public Object {
       KJ_FAIL_ASSERT("Should not have been called");
     });
 
-    js.v8Isolate->PerformMicrotaskCheckpoint();
+    js.runMicrotasks();
 
     KJ_ASSERT(finished);
 
@@ -97,9 +97,73 @@ struct GeneratorContext: public Object {
       return js.resolvedPromise();
     });
 
-    js.v8Isolate->PerformMicrotaskCheckpoint();
+    js.runMicrotasks();
 
     return count;
+  }
+
+  void manualAsyncGeneratorTest(Lock& js, AsyncGenerator<kj::String> generator) {
+    uint calls = 0;
+    generator.next(js).then(js, [&calls](auto& js, auto value) {
+      calls++;
+      KJ_ASSERT(KJ_ASSERT_NONNULL(value) == "a");
+      return js.resolvedPromise();
+    });
+
+    generator.next(js).then(js, [&calls](auto& js, auto value) {
+      calls++;
+      KJ_ASSERT(KJ_ASSERT_NONNULL(value) == "b");
+      return js.resolvedPromise();
+    });
+
+    generator.next(js).then(js, [&calls](auto& js, auto value) {
+      calls++;
+      KJ_ASSERT(value == kj::none);
+    });
+
+    js.runMicrotasks();
+    KJ_ASSERT(calls == 3);
+  }
+
+  void manualAsyncGeneratorTestEarlyReturn(Lock& js, AsyncGenerator<kj::String> generator) {
+    uint calls = 0;
+    generator.next(js).then(js, [&calls](auto& js, auto value) {
+      calls++;
+      KJ_ASSERT(KJ_ASSERT_NONNULL(value) == "a");
+      return js.resolvedPromise();
+    });
+
+    generator.return_(js, kj::str("foo")).then(js, [&calls](auto& js) { calls++; });
+
+    generator.next(js).then(js, [&calls](auto& js, auto value) {
+      calls++;
+      KJ_ASSERT(value == kj::none);
+    });
+
+    js.runMicrotasks();
+    KJ_ASSERT(calls == 3);
+  }
+
+  void manualAsyncGeneratorTestThrow(Lock& js, AsyncGenerator<kj::String> generator) {
+    uint calls = 0;
+    generator.next(js).then(js, [&calls](auto& js, auto value) {
+      calls++;
+      KJ_ASSERT(KJ_ASSERT_NONNULL(value) == "a");
+      return js.resolvedPromise();
+    });
+
+    // The default implementation of throw on the Async generator will result in a
+    // rejected promise being returned by generator.throw_(...)
+    generator.throw_(js, js.v8Ref<v8::Value>(js.str("boom"_kj)))
+        .catch_(js, [&calls](jsg::Lock& js, jsg::Value exception) { calls++; });
+
+    generator.next(js).then(js, [&calls](auto& js, auto value) {
+      calls++;
+      KJ_ASSERT(value == kj::none);
+    });
+
+    js.runMicrotasks();
+    KJ_ASSERT(calls == 3);
   }
 
   struct Test {
@@ -118,6 +182,9 @@ struct GeneratorContext: public Object {
     JSG_METHOD(generatorWrongType);
     JSG_METHOD(asyncGeneratorTest);
     JSG_METHOD(asyncGeneratorErrorTest);
+    JSG_METHOD(manualAsyncGeneratorTest);
+    JSG_METHOD(manualAsyncGeneratorTestEarlyReturn);
+    JSG_METHOD(manualAsyncGeneratorTestThrow);
   }
 };
 JSG_DECLARE_ISOLATE_TYPE(GeneratorIsolate, GeneratorContext, GeneratorContext::Test);
@@ -128,14 +195,13 @@ KJ_TEST("Generator works") {
   e.expectEval("generatorTest([undefined,2,3])", "number", "2");
 
   e.expectEval(
-    "function* gen() { try { yield 'a'; yield 'b'; yield 'c'; } finally { yield 'd'; } };"
-    "generatorTest(gen())", "number", "3");
+      "function* gen() { try { yield 'a'; yield 'b'; yield 'c'; } finally { yield 'd'; } };"
+      "generatorTest(gen())",
+      "number", "3");
 
-  e.expectEval(
-    "function* gen() { try { yield 'a'; yield 'b'; } catch { yield 'c' } }; "
-    "generatorErrorTest(gen())",
-    "number", "2"
-  );
+  e.expectEval("function* gen() { try { yield 'a'; yield 'b'; } catch { yield 'c' } }; "
+               "generatorErrorTest(gen())",
+      "number", "2");
 
   e.expectEval("sequenceOfSequenceTest([['a','b'],['c', undefined]])", "number", "4");
 
@@ -146,18 +212,24 @@ KJ_TEST("Generator works") {
 KJ_TEST("AsyncGenerator works") {
   Evaluator<GeneratorContext, GeneratorIsolate> e(v8System);
 
-  e.expectEval("async function* foo() { yield 'a'; yield 'b'; }; asyncGeneratorTest(foo());",
-               "number", "1");
+  e.expectEval(
+      "async function* foo() { yield 'a'; yield 'b'; }; asyncGeneratorTest(foo());", "number", "1");
 
   e.expectEval("async function* foo() { try { yield 'a'; yield 'b'; } finally { yield 'c'; } };"
                "asyncGeneratorTest(foo());",
-               "number", "2");
+      "number", "2");
 
-  e.expectEval(
-    "async function* gen() { try { yield 'a'; yield 'b'; } catch { yield 'c' } }; "
-    "asyncGeneratorErrorTest(gen())",
-    "number", "2"
-  );
+  e.expectEval("async function* gen() { try { yield 'a'; yield 'b'; } catch { yield 'c' } }; "
+               "asyncGeneratorErrorTest(gen())",
+      "number", "2");
+
+  e.expectEval("manualAsyncGeneratorTest(async function* foo() { yield 'a'; yield 'b'; }())",
+      "undefined", "undefined");
+  e.expectEval("manualAsyncGeneratorTestEarlyReturn(async function* foo() "
+               "{ yield 'a'; yield 'b'; }())",
+      "undefined", "undefined");
+  e.expectEval("manualAsyncGeneratorTestThrow(async function* foo() { yield 'a'; yield 'b'; }())",
+      "undefined", "undefined");
 }
 
 }  // namespace

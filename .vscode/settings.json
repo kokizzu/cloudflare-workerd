@@ -4,5 +4,17 @@
     },
     "files.insertFinalNewline": true,
     "files.trimTrailingWhitespace": true,
-    "editor.tabSize": 2
+    "editor.tabSize": 2,
+    "terminal.integrated.env.windows": {
+        "BAZEL_LLVM" : "C:\\Program Files\\LLVM",
+        "BAZEL_SH" : "C:\\msys64\\usr\\bin\\bash.exe",
+        "BAZEL_VC" : "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC",
+        "BAZEL_WINSDK_FULL_VERSION" : "10.0.22000.0",
+    },
+    "clangd.arguments": [
+        "--background-index",
+        "--header-insertion=never",
+        "--compile-commands-dir=${workspaceFolder}/",
+        "--query-driver=**"
+    ],
 }

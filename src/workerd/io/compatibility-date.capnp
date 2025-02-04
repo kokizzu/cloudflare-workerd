@@ -8,18 +8,42 @@ using Cxx = import "/capnp/c++.capnp";
 $Cxx.namespace("workerd");
 $Cxx.allowCancellation;
 
-const supportedCompatibilityDate :Text = "2023-01-15";
-# Newest compatibility date that can safely be set using code compiled from this repo. Trying to
-# run a Worker with a newer compatibility date than this will fail.
-#
-# This should be updated to the current date on a regular basis. The reason this exists is so that
-# if you build an old version of the code and try to run a new Worker with it, you get an
-# appropriate error, rather than have the code run with the wrong compatibility mode.
-#
-# Note that the production Cloudflare Workers upload API always accepts any date up to the current
-# date regardless of this constant, on the assumption that Cloudflare is always running the latest
-# version of the code. This constant is more to protect users who are self-hosting the runtime and
-# could be running an older version.
+struct ImpliedByAfterDate @0x8f8c1b68151b6cff {
+  # Annotates a compatibility flag to indicate that it is implied by the enablement
+  # of the named flag(s) after the specified date.
+  union {
+    name @0 :Text;
+    names @2 :List(Text);
+  }
+  date @1 :Text;
+}
+
+struct PythonSnapshotRelease @0x89c66fb883cb6975 {
+  # Used to indicate a specific Python release that introduces a change which likely breaks
+  # existing memory snapshots.
+  #
+  # The versions/dates specified here are used to generate a filename for the package memory
+  # snapshots created by the validator. They are also used to generate a filename of the Pyodide
+  # and package bundle that gets downloaded for Python Workers.
+  pyodide @0 :Text;
+  # The Pyodide version, for example "0.26.0a2".
+  pyodideRevision @1 :Text;
+  # A date identifying a revision of the above Pyodide version. A change in this field but not
+  # the `pyodide` version field may indicate that changes to the workerd Pyodide integration code
+  # were made with the Pyodide version remaining the same.
+  #
+  # For example "2024-05-25".
+  packages @2 :Text;
+  # A date identifying a revision of the Python package bundle.
+  #
+  # For example "2024-02-18".
+  backport @3 :Int64;
+  # A number that is incremented each time we need to backport a fix to an existing Python release.
+  baselineSnapshotHash @4 :Text;
+  # A sha256 checksum hash of the baseline/universal memory snapshot to use for Python Workers using
+  # this release.
+}
+
 
 struct CompatibilityFlags @0x8f8c1b68151b6cef {
   # Flags that change the basic behavior of the runtime API, especially for
@@ -40,14 +64,14 @@ struct CompatibilityFlags @0x8f8c1b68151b6cef {
   #
   # A disable-flag is used when a worker needs to keep long-term backwards compatibility with one
   # bug but doesn't want to hold back everything else. This is hopefully rare! Most features
-  # should not have a disable-flag defined unless we get requests from customers.
+  # should have a disable-flag defined.
 
   annotation compatEnableDate @0x91a5d5d7244cf6d0 (field) :Text;
   # The compatibility date (date string, like "2021-05-17") after which this flag should always
   # be enabled.
 
   annotation compatEnableAllDates @0x9a1d37c8030d9418 (field) :Void;
-  # All compatability dates should start using the flag as enabled.
+  # All compatibility dates should start using the flag as enabled.
   # NOTE: This is almost NEVER what you actually want because you're most likely breaking back
   # compat. Note that workers uploaded with the flag will fail validation, so this will break
   # uploads for anyone still using the flag.
@@ -62,8 +86,9 @@ struct CompatibilityFlags @0x8f8c1b68151b6cef {
   annotation neededByFl @0xbd23aff9deefc308 (field) :Void;
   # A tag to tell us which fields we'll need to propagate to FL on subrequests and responses.
   #
-  # ("FL" refers to Cloudflare's HTTP proxy stack which is used for all outbound requests. Flags
-  # with this annotation have no effect when `workerd` is used outside of Cloudflare.)
+  # ("FL" refers to Cloudflare's HTTP proxy stack which is used for all outbound requests. Except
+  # for `brotliContentEncoding`, flags with this annotation have no effect when `workerd` is used
+  # outside of Cloudflare.)
 
   annotation experimental @0xe3e5a63e76284d88 (field):Void;
   # Flags with this annotation can only be used when workerd is run with the --experimental flag.
@@ -71,6 +96,13 @@ struct CompatibilityFlags @0x8f8c1b68151b6cef {
   # not covered by Workers' usual backwards-compatibility promise. Experimental flags cannot be
   # used in Workers deployed on Cloudflare except by test accounts belonging to Cloudflare team
   # members.
+
+  annotation impliedByAfterDate @0xe3e5a63e76284d89 (field) :ImpliedByAfterDate;
+
+  annotation pythonSnapshotRelease @0xef74c0cc5d18cc0c (field) :PythonSnapshotRelease;
+  # This annotation marks a compat flag as introducing a potentially breaking change to Python
+  # memory snapshots. See the doc comment for the `PythonSnapshotRelease` struct above for more
+  # details.
 
   formDataParserSupportsFiles @0 :Bool
       $compatEnableFlag("formdata_parser_supports_files")
@@ -223,26 +255,441 @@ struct CompatibilityFlags @0x8f8c1b68151b6cef {
   # Obsolete flag. Has no effect.
 
   webSocketCompression @20 :Bool
-      $compatEnableFlag("web_socket_compression");
+      $compatEnableFlag("web_socket_compression")
+      $compatEnableDate("2023-08-15")
+      $compatDisableFlag("no_web_socket_compression");
   # Enables WebSocket compression. Without this flag, all attempts to negotiate compression will
-  # be refused, so WebSockets will never use compression. With this flag, the system will
-  # automatically negotiate the use of the permesssage-deflate extension where appropriate.
-  # The Worker can also request specific compression settings by specifying a valid
-  # Sec-WebSocket-Extensions header, or setting the header to the empty string to explicitly
-  # request that no compression be used.
+  # be refused for scripts prior to the compat date, so WebSockets will never use compression.
+  # With this flag, the system will automatically negotiate the use of the permessage-deflate
+  # extension where appropriate. The Worker can also request specific compression settings by
+  # specifying a valid Sec-WebSocket-Extensions header, or setting the header to the empty string
+  # to explicitly request that no compression be used.
 
   nodeJsCompat @21 :Bool
       $compatEnableFlag("nodejs_compat")
+      $compatDisableFlag("no_nodejs_compat");
+  # Enables nodejs compat imports in the application.
+
+  obsolete22 @22 :Bool
+      $compatEnableFlag("tcp_sockets_support");
+  # Used to enables TCP sockets in workerd.
+
+  specCompliantResponseRedirect @23 :Bool
+      $compatEnableDate("2023-03-14")
+      $compatEnableFlag("response_redirect_url_standard")
+      $compatDisableFlag("response_redirect_url_original");
+  # The original URL implementation based on kj::Url is not compliant with the
+  # WHATWG URL Standard, leading to a number of issues reported by users. Unfortunately,
+  # the specCompliantUrl flag did not contemplate the redirect usage. This flag is
+  # specifically about the usage in a redirect().
+
+  workerdExperimental @24 :Bool
+      $compatEnableFlag("experimental")
       $experimental;
   # Experimental, do not use.
-  # Enables nodejs compat imports in the application.
-  # This is currently a work in progress mechanism that is not yet available for use in workerd.
-  # WARNING: IT WILL BREAK in the future. Do not ignore this warning.
+  # This is a catch-all compatibility flag for experimental development within workerd
+  # that is not covered by another more-specific compatibility flag. It is the intention
+  # of this flag to always have the $experimental attribute.
+  # This is intended to guard new features that do not introduce any backwards-compatibility
+  # concerns (e.g. they only add a new API), and therefore do not need a compat flag of their own
+  # in the long term, but where we still want to guard access to the feature while it is in
+  # development. Don't use this for backwards-incompatible changes; give them their own flag.
+  # WARNING: Any feature blocked by this flag is subject to change at any time, including
+  # removal. Do not ignore this warning.
 
-  tcpSocketsSupport @22 :Bool
-      $compatEnableFlag("tcp_sockets_support")
+  durableObjectGetExisting @25 :Bool
+      $compatEnableFlag("durable_object_get_existing")
       $experimental;
-  # Enables TCP sockets in workerd.
-  # These are still under development and therefore subject to change.
-  # WARNING: DO NOT depend on this feature as its API is still subject to change.
+  # Experimental, allows getting a durable object stub that ensures the object already exists.
+  # This is currently a work in progress mechanism that is not yet available for use in workerd.
+
+  httpHeadersGetSetCookie @26 :Bool
+      $compatEnableFlag("http_headers_getsetcookie")
+      $compatDisableFlag("no_http_headers_getsetcookie")
+      $compatEnableDate("2023-03-01");
+  # Enables the new headers.getSetCookie() API and the corresponding changes in behavior for
+  # the Header objects keys() and entries() iterators.
+
+  dispatchExceptionTunneling @27 :Bool
+      $compatEnableDate("2023-03-01")
+      $compatEnableFlag("dynamic_dispatch_tunnel_exceptions")
+      $compatDisableFlag("dynamic_dispatch_treat_exceptions_as_500");
+  # Enables the tunneling of exceptions from a dynamic dispatch callee back into the caller.
+  # Previously any uncaught exception in the callee would be returned to the caller as an empty
+  # HTTP 500 response.
+
+  serviceBindingExtraHandlers @28 :Bool
+      $compatEnableFlag("service_binding_extra_handlers")
+      $experimental;
+  # Allows service bindings to call additional event handler methods on the target Worker.
+  # Initially only includes support for calling the queue() handler.
+  # WARNING: this flag exposes the V8 deserialiser to users via `Fetcher#queue()` `serializedBody`.
+  # Historically, this has required a trusted environment to be safe. If we decide to make this
+  # flag non-experimental, we must ensure we take appropriate precuations.
+
+  noCfBotManagementDefault @29 :Bool
+      $compatEnableFlag("no_cf_botmanagement_default")
+      $compatDisableFlag("cf_botmanagement_default")
+      $compatEnableDate("2023-08-01");
+  # This one operates a bit backwards. With the flag *enabled* no default cfBotManagement
+  # data will be included. The the flag *disable*, default cfBotManagement data will be
+  # included in the request.cf if the field is not present.
+
+  urlSearchParamsDeleteHasValueArg @30 :Bool
+      $compatEnableFlag("urlsearchparams_delete_has_value_arg")
+      $compatDisableFlag("no_urlsearchparams_delete_has_value_arg")
+      $compatEnableDate("2023-07-01");
+  # When enabled, the delete() and has() methods of the standard URLSearchParams object
+  # (see url-standard.h) will have the recently added second value argument enabled.
+
+  strictCompression @31 :Bool
+      $compatEnableFlag("strict_compression_checks")
+      $compatDisableFlag("no_strict_compression_checks")
+      $compatEnableDate("2023-08-01");
+  # Perform additional error checking in the Web Compression API and throw an error if a
+  # DecompressionStream has trailing data or gets closed before the full compressed data has been
+  # provided.
+
+  brotliContentEncoding @32 :Bool
+      $compatEnableFlag("brotli_content_encoding")
+      $compatEnableDate("2024-04-29")
+      $compatDisableFlag("no_brotli_content_encoding")
+      $neededByFl;
+  # Enables compression/decompression support for the brotli compression algorithm.
+  # With the flag enabled workerd will support the "br" content encoding in the Request and
+  # Response APIs and compress or decompress data accordingly as with gzip.
+
+  strictCrypto @33 :Bool
+      $compatEnableFlag("strict_crypto_checks")
+      $compatDisableFlag("no_strict_crypto_checks")
+      $compatEnableDate("2023-08-01");
+  # Perform additional error checking in the Web Crypto API to conform with the specification as
+  # well as reject key parameters that may be unsafe based on key length or public exponent.
+
+  rttiApi @34 :Bool
+      $compatEnableFlag("rtti_api")
+      $experimental;
+  # Enables the `workerd:rtti` module for querying runtime-type-information from JavaScript.
+
+  webgpu @35 :Bool
+      $compatEnableFlag("webgpu")
+      $experimental;
+
+  cryptoPreservePublicExponent @36 :Bool
+      $compatEnableFlag("crypto_preserve_public_exponent")
+      $compatDisableFlag("no_crypto_preserve_public_exponent")
+      $compatEnableDate("2023-12-01");
+  # In the WebCrypto API, the `publicExponent` field of the algorithm of RSA keys would previously
+  # be an ArrayBuffer. Using this flag, publicExponent is a Uint8Array as mandated by the
+  # specification.
+
+  vectorizeQueryMetadataOptional @37 :Bool
+      $compatEnableFlag("vectorize_query_metadata_optional")
+      $compatEnableDate("2023-11-08")
+      $compatDisableFlag("vectorize_query_original");
+  # Vectorize query option change to allow returning of metadata to be optional. Accompanying this:
+  # a return format change to move away from a nested object with the VectorizeVector.
+
+  unsafeModule @38 :Bool
+      $compatEnableFlag("unsafe_module")
+      $experimental;
+  # Enables the `workerd:unsafe` module for performing dangerous operations from JavaScript.
+  # Intended for local development and testing use cases. Currently just supports aborting all
+  # Durable Objects running in a `workerd` process.
+
+  jsRpc @39 :Bool
+      $compatEnableFlag("js_rpc")
+      $experimental;
+  # Enables JS RPC on the server side for Durable Object classes that do not explicitly extend
+  # `DurableObjects`.
+  #
+  # This flag is obsolete but supported temporarily to avoid breaking people who used it. All code
+  # should switch to using `extends DurableObject` as the way to enable RPC.
+  #
+  # As of this writing, it is still necessary to enable the general `experimental` flag to use RPC
+  # on both the client and server sides.
+
+  noImportScripts @40 :Bool
+      $compatEnableFlag("no_global_importscripts")
+      $compatDisableFlag("global_importscripts")
+      $compatEnableDate("2024-03-04");
+  # Removes the non-implemented importScripts() function from the global scope.
+
+  nodeJsAls @41 :Bool
+      $compatEnableFlag("nodejs_als")
+      $compatDisableFlag("no_nodejs_als");
+  # Enables the availability of the Node.js AsyncLocalStorage API independently of the full
+  # node.js compatibility option.
+
+  queuesJsonMessages @42 :Bool
+      $compatEnableFlag("queues_json_messages")
+      $compatDisableFlag("no_queues_json_messages")
+      $compatEnableDate("2024-03-18");
+  # Queues bindings serialize messages to JSON format by default (the previous default was v8 format)
+
+  pythonWorkers @43 :Bool
+      $compatEnableFlag("python_workers")
+      $pythonSnapshotRelease(pyodide = "0.26.0a2", pyodideRevision = "2024-03-01",
+          packages = "20240829.4", backport = 14,
+          baselineSnapshotHash = "d13ce2f4a0ade2e09047b469874dacf4d071ed3558fec4c26f8d0b99d95f77b5")
+      $impliedByAfterDate(name = "pythonWorkersDevPyodide", date = "2000-01-01");
+  # Enables Python Workers. Access to this flag is not restricted, instead bundles containing
+  # Python modules are restricted in EWC.
+  #
+  # WARNING: Python Workers are still an experimental feature and thus subject to change.
+
+  fetcherNoGetPutDelete @44 :Bool
+      $compatEnableFlag("fetcher_no_get_put_delete")
+      $compatDisableFlag("fetcher_has_get_put_delete")
+      $compatEnableDate("2024-03-26");
+  # Historically, the `Fetcher` type -- which is the type of Service Bindings, and also the parent
+  # type of Durable Object stubs -- had special methods `get()`, `put()`, and `delete()`, which
+  # were shortcuts for calling `fetch()` with the corresponding HTTP method. These methods were
+  # never documented.
+  #
+  # To make room for people to define their own RPC methods with these names, this compat flag
+  # makes them no longer defined.
+
+  unwrapCustomThenables @45 :Bool
+      $compatEnableFlag("unwrap_custom_thenables")
+      $compatDisableFlag("no_unwrap_custom_thenables")
+      $compatEnableDate("2024-04-01");
+
+  fetcherRpc @46 :Bool
+      $compatEnableFlag("rpc")
+      $compatDisableFlag("no_rpc")
+      $compatEnableDate("2024-04-03");
+  # Whether the type `Fetcher` type -- which is the type of Service Bindings, and also the parent
+  # type of Durable Object stubs -- support RPC. If so, this type will have a wildcard method, so
+  # it will appear that all possible property names are present on any fetcher instance. This could
+  # break code that tries to infer types based on the presence or absence of methods.
+
+  internalStreamByobReturn @47 :Bool
+      $compatEnableFlag("internal_stream_byob_return_view")
+      $compatDisableFlag("internal_stream_byob_return_undefined")
+      $compatEnableDate("2024-05-13");
+  # Sadly, the original implementation of ReadableStream (now called "internal" streams), did not
+  # properly implement the result of ReadableStreamBYOBReader's read method. When done = true,
+  # per the spec, the result `value` must be an empty ArrayBufferView whose underlying ArrayBuffer
+  # is the same as the one passed to the read method. Our original implementation returned
+  # undefined instead. This flag changes the behavior to match the spec and to match the behavior
+  # implemented by the JS-backed ReadableStream implementation.
+
+  blobStandardMimeType @48 :Bool
+      $compatEnableFlag("blob_standard_mime_type")
+      $compatDisableFlag("blob_legacy_mime_type")
+      $compatEnableDate("2024-06-03");
+  # The original implementation of the Blob mime type normalization when extracting a blob
+  # from the Request or Response body is not compliant with the standard. Unfortunately,
+  # making it compliant is a breaking change. This flag controls the availability of the
+  # new spec-compliant Blob mime type normalization.
+
+  fetchStandardUrl @49 :Bool
+    $compatEnableFlag("fetch_standard_url")
+    $compatDisableFlag("fetch_legacy_url")
+    $compatEnableDate("2024-06-03");
+  # Ensures that WHATWG standard URL parsing is used in the fetch API implementation.
+
+  nodeJsCompatV2 @50 :Bool
+      $compatEnableFlag("nodejs_compat_v2")
+      $compatDisableFlag("no_nodejs_compat_v2")
+      $impliedByAfterDate(name = "nodeJsCompat", date = "2024-09-23");
+  # Implies nodeJSCompat with the following additional modifications:
+  # * Node.js Compat built-ins may be imported/required with or without the node: prefix
+  # * Node.js Compat the globals Buffer and process are available everywhere
+
+  globalFetchStrictlyPublic @51 :Bool
+      $compatEnableFlag("global_fetch_strictly_public")
+      $compatDisableFlag("global_fetch_private_origin");
+  # Controls what happens when a Worker hosted on Cloudflare uses the global `fetch()` function to
+  # request a hostname that is within the Worker's own Cloudflare zone (domain).
+  #
+  # Historically, such requests would be routed to the zone's origin server, ignoring any Workers
+  # mapped to the URL and also bypassing Cloudflare security settings. This behavior made sense
+  # when Workers was first introduced as a way to rewrite requests before passing them along to
+  # the origin, and bindings didn't exist: the only way to forward the request to origin was to
+  # use global fetch(), and if it didn't bypass Workers, you'd end up looping back to the same
+  # Worker.
+  #
+  # However, this behavior has a problem: it opens the door for SSRF attacks. Imagine a Worker is
+  # designed to fetch a resource from a user-provided URL. An attacker could provide a URL that
+  # points back to the Worker's own zone, and possibly cause the Worker to fetch a resource from
+  # origin that isn't meant to be reachable by the public.
+  #
+  # Traditionally, this kind of attack is considered a bug in the application: an application that
+  # fetches untrusted URLs must verify that the URL doesn't refer to a private resource that only
+  # the application itself is meant to access. However, applications can easily get this wrong.
+  # Meanwhile, by using bindings, we can make this class of problem go away.
+  #
+  # When global_fetch_strictly_public is enabled, the global `fetch()` function (when invoked on
+  # Cloudflare Workers) will strictly route requests as if they were made on the public internet.
+  # Thus, requests to a Worker's own zone will loop back to the "front door" of Cloudflare and
+  # will be treated like a request from the internet, possibly even looping back to the same Worker
+  # again. If an application wishes to send requests to its origin, it must configure an "origin
+  # binding". An origin binding behaves like a service binding (it has a `fetch()` method) but
+  # sends requests to the zone's origin servers, bypassing Cloudflare. E.g. the Worker would write
+  # `env.ORIGIN.fetch(req)` to send a request to its origin.
+  #
+  # Note: This flag only impacts behavior on Cloudflare. It has no effect when using workerd.
+  # Under workerd, the config file can control where global `fetch()` goes by configuring the
+  # worker's `globalOutbound` implicit binding. By default, under workerd, global `fetch()` has
+  # always been configured to accept publicly-routable internet hosts only; hostnames which map
+  # to private IP addresses (as defined in e.g. RFC 1918) will be rejected. Thus, workerd has
+  # always been SSRF-safe by default.
+
+  newModuleRegistry @52 :Bool
+      $compatEnableFlag("new_module_registry")
+      $compatDisableFlag("legacy_module_registry")
+      $experimental;
+  # Enables of the new module registry implementation.
+
+  cacheOptionEnabled @53 :Bool
+    $compatEnableFlag("cache_option_enabled")
+    $compatDisableFlag("cache_option_disabled")
+    $compatEnableDate("2024-11-11");
+  # Enables the use of no-store headers from requests
+
+  kvDirectBinding @54 :Bool
+      $compatEnableFlag("kv_direct_binding")
+      $experimental;
+  # Enables bypassing FL by translating pipeline tunnel configuration to subpipeline.
+  # This flag is used only by the internal repo and not directly by workerd.
+
+  allowCustomPorts @55 :Bool
+      $compatEnableFlag("allow_custom_ports")
+      $compatDisableFlag("ignore_custom_ports")
+      $compatEnableDate("2024-09-02")
+      $neededByFl;
+  # Enables fetching hosts with a custom port from workers.
+  # For orange clouded sites only standard ports are allowed (https://developers.cloudflare.com/fundamentals/reference/network-ports/#network-ports-compatible-with-cloudflares-proxy).
+  # For grey clouded sites all ports are allowed.
+
+  increaseWebsocketMessageSize @56 :Bool
+      $compatEnableFlag("increase_websocket_message_size")
+      $experimental;
+  # For local development purposes only, increase the message size limit to 128MB.
+  # This is not expected ever to be made available in production, as large messages are inefficient.
+
+  internalWritableStreamAbortClearsQueue @57 :Bool
+      $compatEnableFlag("internal_writable_stream_abort_clears_queue")
+      $compatDisableFlag("internal_writable_stream_abort_does_not_clear_queue")
+      $compatEnableDate("2024-09-02");
+  # When using the original WritableStream implementation ("internal" streams), the
+  # abort() operation would be handled lazily, meaning that the queue of pending writes
+  # would not be cleared until the next time the queue was processed. This behavior leads
+  # to a situtation where the stream can hang if the consumer stops consuming. When set,
+  # this flag changes the behavior to clear the queue immediately upon abort.
+
+  pythonWorkersDevPyodide @58 :Bool
+    $compatEnableFlag("python_workers_development")
+    $pythonSnapshotRelease(pyodide = "dev", pyodideRevision = "dev",
+          packages = "20240829.4", backport = 0,
+          baselineSnapshotHash = "92859211804cd350f9e14010afad86e584bdd017dc7acfd94709a87f3220afae")
+    $experimental;
+  # Enables Python Workers and uses the bundle from the Pyodide source directory directly. For testing only.
+  #
+  # Note that the baseline snapshot hash here refers to the one used in
+  # `baseline-from-gcs.ew-test-bin.c++`. We don't intend to ever load it in production.
+
+  nodeJsZlib @59 :Bool
+      $compatEnableFlag("nodejs_zlib")
+      $compatDisableFlag("no_nodejs_zlib")
+      $impliedByAfterDate(names = ["nodeJsCompat", "nodeJsCompatV2"], date = "2024-09-23");
+  # Enables node:zlib implementation while it is in-development.
+  # Once the node:zlib implementation is complete, this will be automatically enabled when
+  # nodejs_compat or nodejs_compat_v2 are enabled.
+
+  replicaRouting @60 :Bool
+      $compatEnableFlag("replica_routing")
+      $experimental;
+  # Enables routing to a replica on the client-side.
+  # Doesn't mean requests *will* be routed to a replica, only that they can be.
+
+  enableD1WithSessionsAPI @61 :Bool
+      $compatEnableFlag("enable_d1_with_sessions_api")
+      $experimental;
+  # Enables the withSessions(commitTokenOrConstraint) method that allows users
+  # to use read-replication for D1.
+  # Experimental since this is not yet ready and is only meant for internal testing during development.
+
+  handleCrossRequestPromiseResolution @62 :Bool
+      $compatEnableFlag("handle_cross_request_promise_resolution")
+      $compatDisableFlag("no_handle_cross_request_promise_resolution")
+      $compatEnableDate("2024-10-14");
+  # Historically, it has been possible to resolve a promise from an incorrect request
+  # IoContext. This leads to issues with promise continuations being scheduled to run
+  # in the wrong IoContext leading to errors and difficult to diagnose bugs. With this
+  # compatibility flag we arrange to have such promise continuations scheduled to run
+  # in the correct IoContext if it is still alive, or dropped on the floor with a warning
+  # if the correct IoContext is not still alive.
+  obsolete63 @63 :Bool
+      $experimental;
+
+  setToStringTag @64 :Bool
+      $compatEnableFlag("set_tostring_tag")
+      $compatDisableFlag("do_not_set_tostring_tag")
+      $compatEnableDate("2024-09-26");
+  # A change was made that set the Symbol.toStringTag on all jsg::Objects in order to
+  # fix several spec compliance bugs. Unfortunately it turns out that was more breaking
+  # than expected. This flag restores the original behavior for compat dates before
+  # 2024-09-26
+
+  upperCaseAllHttpMethods @65 :Bool
+      $compatEnableFlag("upper_case_all_http_methods")
+      $compatDisableFlag("no_upper_case_all_http_methods")
+      $compatEnableDate("2024-10-14");
+  # HTTP methods are expected to be upper-cased. Per the fetch spec, if the methods
+  # is specified as `get`, `post`, `put`, `delete`, `head`, or `options`, implementations
+  # are expected to uppercase the method. All other method names would generally be
+  # expected to throw as unrecognized (e.g. `patch` would be an error while `PATCH` is
+  # accepted). This is a bit restrictive, even if it is in the spec. This flag modifies
+  # the behavior to uppercase all methods prior to parsing to that the method is always
+  # recognized if it is a known method.
+
+  pythonExternalPackages @66 :Bool
+      $compatEnableFlag("python_external_packages");
+  # Temporary flag to load Python packages from external bundle loaded at runtime.
+  #
+  # This is a compat flag so that we can opt in our test workers into it before rolling out to
+  # everyone.
+
+  noTopLevelAwaitInRequire @67 :Bool
+      $compatEnableFlag("disable_top_level_await_in_require")
+      $compatDisableFlag("enable_top_level_await_in_require")
+      $compatEnableDate("2024-12-02");
+  # When enabled, use of top-level await syntax in require() calls will be disallowed.
+  # The ecosystem and runtimes are moving to a state where top level await in modules
+  # is being strongly discouraged.
+
+  fixupTransformStreamBackpressure @68 :Bool
+      $compatEnableFlag("fixup-transform-stream-backpressure")
+      $compatDisableFlag("original-transform-stream-backpressure")
+      $compatEnableDate("2024-12-16");
+  # A bug in the original implementation of TransformStream failed to apply backpressure
+  # correctly. The fix, however, can break existing implementations that don't account
+  # for the bug so we need to put the fix behind a compat flag.
+
+  # Experimental support for exporting user spans to tail worker.
+  tailWorkerUserSpans @69 :Bool
+      $compatEnableFlag("tail_worker_user_spans")
+      $experimental;
+
+  cacheNoCache @70 :Bool
+      $compatEnableFlag("cache_no_cache_enabled")
+      $compatDisableFlag("cache_no_cache_disabled")
+      $experimental;
+  # Enables the use of cache: no-cache in the fetch api.
+
+  pythonWorkers20250116 @71 :Bool
+      $compatEnableFlag("python_workers_20250116")
+      $experimental
+      $pythonSnapshotRelease(pyodide = "0.27.1", pyodideRevision = "2025-01-16",
+          packages = "20241218", backport = 2,
+          baselineSnapshotHash = "TODO");
+
+  requestCfOverridesCacheRules @72 :Bool
+      $compatEnableFlag("request_cf_overrides_cache_rules")
+      $experimental
+      $neededByFl;
+  # Enables cache settings specified request in fetch api cf object to override cache rules. (only for user owned or grey-clouded sites)
 }

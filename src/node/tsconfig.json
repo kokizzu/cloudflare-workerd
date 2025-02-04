@@ -1,0 +1,39 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "lib": ["ESNext", "dom"],
+    "alwaysStrict": true,
+    "strict": true,
+    "allowJs": true,
+    "allowUnreachableCode": false,
+    "allowUnusedLabels": false,
+    "exactOptionalPropertyTypes": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noPropertyAccessFromIndexSignature": false,
+    "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "strictNullChecks": true,
+    "esModuleInterop": true,
+    "moduleResolution": "node",
+    "declaration": true,
+    "types": ["@types/node"],
+    "paths": {
+      "node:*": ["./*"],
+      "node:assert/*": ["./*"],
+      "node:dns/*": ["./*"],
+      "node:util/*": ["./*"],
+      "node:path/*": ["./*"],
+      "node:stream/*": ["./*"],
+      "node:timers/*": ["./*"],
+      "node-internal:*": ["./internal/*"],
+      "cloudflare-internal:sockets": ["./internal/sockets.d.ts"],
+      "cloudflare-internal:workers": ["./internal/workers.d.ts"],
+      "workerd:compatibility-flags": ["./internal/compatibility-flags.d.ts"]
+    }
+  },
+  "exclude": []
+}

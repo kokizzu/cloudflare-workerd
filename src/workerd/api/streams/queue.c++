@@ -3,6 +3,7 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 #include "queue.h"
+
 #include <algorithm>
 
 namespace workerd::api {
@@ -13,47 +14,46 @@ namespace workerd::api {
 
 #pragma region ValueQueue::ReadRequest
 
-void ValueQueue::ReadRequest::resolveAsDone(jsg::Lock&) {
-  resolver.resolve(ReadResult { .done = true });
+void ValueQueue::ReadRequest::resolveAsDone(jsg::Lock& js) {
+  resolver.resolve(js, ReadResult{.done = true});
 }
 
-void ValueQueue::ReadRequest::resolve(jsg::Lock&, jsg::Value value) {
-  resolver.resolve(ReadResult { .value = kj::mv(value), .done = false });
+void ValueQueue::ReadRequest::resolve(jsg::Lock& js, jsg::Value value) {
+  resolver.resolve(js, ReadResult{.value = kj::mv(value), .done = false});
 }
 
 void ValueQueue::ReadRequest::reject(jsg::Lock& js, jsg::Value& value) {
-  resolver.reject(value.getHandle(js));
+  resolver.reject(js, value.getHandle(js));
 }
 
 #pragma endregion ValueQueue::ReadRequest
 
 #pragma region ValueQueue::Entry
 
-ValueQueue::Entry::Entry(jsg::Value value, size_t size)
-    : value(kj::mv(value)), size(size) {}
+ValueQueue::Entry::Entry(jsg::Value value, size_t size): value(kj::mv(value)), size(size) {}
 
 jsg::Value ValueQueue::Entry::getValue(jsg::Lock& js) {
   return value.addRef(js);
 }
 
-size_t ValueQueue::Entry::getSize() const { return size; }
+size_t ValueQueue::Entry::getSize() const {
+  return size;
+}
 
 void ValueQueue::Entry::visitForGc(jsg::GcVisitor& visitor) {
   visitor.visit(value);
-}
-
-ValueQueue::Entry ValueQueue::Entry::clone(jsg::Lock& js) {
-  return Entry(value.addRef(js), size);
 }
 
 #pragma endregion ValueQueue::Entry
 
 #pragma region ValueQueue::QueueEntry
 
-ValueQueue::QueueEntry ValueQueue::QueueEntry::clone() {
-  return QueueEntry {
-    .entry = kj::addRef(*entry),
-  };
+kj::Own<ValueQueue::Entry> ValueQueue::Entry::clone(jsg::Lock& js) {
+  return kj::heap<Entry>(getValue(js), getSize());
+}
+
+ValueQueue::QueueEntry ValueQueue::QueueEntry::clone(jsg::Lock& js) {
+  return QueueEntry{.entry = entry->clone(js)};
 }
 
 #pragma endregion ValueQueue::QueueEntry
@@ -61,24 +61,24 @@ ValueQueue::QueueEntry ValueQueue::QueueEntry::clone() {
 #pragma region ValueQueue::Consumer
 
 ValueQueue::Consumer::Consumer(
-    ValueQueue& queue,
-    kj::Maybe<ConsumerImpl::StateListener&> stateListener)
+    ValueQueue& queue, kj::Maybe<ConsumerImpl::StateListener&> stateListener)
     : impl(queue.impl, stateListener) {}
 
 ValueQueue::Consumer::Consumer(
-    QueueImpl& impl,
-    kj::Maybe<ConsumerImpl::StateListener&> stateListener)
+    QueueImpl& impl, kj::Maybe<ConsumerImpl::StateListener&> stateListener)
     : impl(impl, stateListener) {}
 
-void ValueQueue::Consumer::cancel(
-    jsg::Lock& js,
-    jsg::Optional<v8::Local<v8::Value>> maybeReason) {
+void ValueQueue::Consumer::cancel(jsg::Lock& js, jsg::Optional<v8::Local<v8::Value>> maybeReason) {
   impl.cancel(js, maybeReason);
 }
 
-void ValueQueue::Consumer::close(jsg::Lock& js) { impl.close(js); };
+void ValueQueue::Consumer::close(jsg::Lock& js) {
+  impl.close(js);
+};
 
-bool ValueQueue::Consumer::empty() { return impl.empty(); }
+bool ValueQueue::Consumer::empty() {
+  return impl.empty();
+}
 
 void ValueQueue::Consumer::error(jsg::Lock& js, jsg::Value reason) {
   impl.error(js, kj::mv(reason));
@@ -92,13 +92,16 @@ void ValueQueue::Consumer::push(jsg::Lock& js, kj::Own<Entry> entry) {
   impl.push(js, kj::mv(entry));
 }
 
-void ValueQueue::Consumer::reset() { impl.reset(); };
+void ValueQueue::Consumer::reset() {
+  impl.reset();
+};
 
-size_t ValueQueue::Consumer::size() { return impl.size(); }
+size_t ValueQueue::Consumer::size() {
+  return impl.size();
+}
 
 kj::Own<ValueQueue::Consumer> ValueQueue::Consumer::clone(
-    jsg::Lock& js,
-    kj::Maybe<ConsumerImpl::StateListener&> stateListener) {
+    jsg::Lock& js, kj::Maybe<ConsumerImpl::StateListener&> stateListener) {
   auto consumer = kj::heap<Consumer>(impl.queue, stateListener);
   impl.cloneTo(js, consumer->impl);
   return kj::mv(consumer);
@@ -108,38 +111,49 @@ bool ValueQueue::Consumer::hasReadRequests() {
   return impl.hasReadRequests();
 }
 
+void ValueQueue::Consumer::cancelPendingReads(jsg::Lock& js, jsg::JsValue reason) {
+  impl.cancelPendingReads(js, reason);
+}
+
+void ValueQueue::Consumer::visitForGc(jsg::GcVisitor& visitor) {
+  visitor.visit(impl);
+}
+
 #pragma endregion ValueQueue::Consumer
 
-ValueQueue::ValueQueue(size_t highWaterMark) : impl(highWaterMark) {}
+ValueQueue::ValueQueue(size_t highWaterMark): impl(highWaterMark) {}
 
 void ValueQueue::close(jsg::Lock& js) {
   impl.close(js);
 }
 
-ssize_t ValueQueue::desiredSize() const { return impl.desiredSize(); }
+ssize_t ValueQueue::desiredSize() const {
+  return impl.desiredSize();
+}
 
 void ValueQueue::error(jsg::Lock& js, jsg::Value reason) {
   impl.error(js, kj::mv(reason));
 }
 
-void ValueQueue::maybeUpdateBackpressure() { impl.maybeUpdateBackpressure(); }
+void ValueQueue::maybeUpdateBackpressure() {
+  impl.maybeUpdateBackpressure();
+}
 
 void ValueQueue::push(jsg::Lock& js, kj::Own<Entry> entry) {
   impl.push(js, kj::mv(entry));
 }
 
-size_t ValueQueue::size() const { return impl.size(); }
+size_t ValueQueue::size() const {
+  return impl.size();
+}
 
 void ValueQueue::handlePush(
-    jsg::Lock& js,
-    ConsumerImpl::Ready& state,
-    QueueImpl& queue,
-    kj::Own<Entry> entry) {
+    jsg::Lock& js, ConsumerImpl::Ready& state, QueueImpl& queue, kj::Own<Entry> entry) {
   // If there are no pending reads, just add the entry to the buffer and return, adjusting
   // the size of the queue in the process.
   if (state.readRequests.empty()) {
     state.queueTotalSize += entry->getSize();
-    state.buffer.push_back(QueueEntry { .entry = kj::mv(entry) });
+    state.buffer.push_back(QueueEntry{.entry = kj::mv(entry)});
     return;
   }
 
@@ -149,56 +163,83 @@ void ValueQueue::handlePush(
   state.readRequests.pop_front();
 }
 
-void ValueQueue::handleRead(
-    jsg::Lock& js,
+void ValueQueue::handleRead(jsg::Lock& js,
     ConsumerImpl::Ready& state,
     ConsumerImpl& consumer,
     QueueImpl& queue,
     ReadRequest request) {
   // If there are no pending read requests and there is data in the buffer,
   // we will try to fulfill the read request immediately.
-  if (state.readRequests.empty() && state.queueTotalSize > 0) {
-    auto entry = kj::mv(state.buffer.front());
-    state.buffer.pop_front();
+  if (state.queueTotalSize > 0 && state.buffer.empty()) {
+    // Is our queue accounting correct?
+    LOG_WARNING_ONCE("ValueQueue::handleRead encountered a queueTotalSize > 0 "
+                     "with an empty buffer. This should not happen.",
+        state.queueTotalSize);
+  }
+  if (state.readRequests.empty() && !state.buffer.empty()) {
+    auto& entry = state.buffer.front();
 
     KJ_SWITCH_ONEOF(entry) {
       KJ_CASE_ONEOF(c, ConsumerImpl::Close) {
-        // The next item was a close sentinel! Resolve the read immediately with a close indicator.
+        // This case shouldn't actually happen. The queueTotalSize should be zero if the
+        // only item remaining in the queue is the close sentinel because we decrement the
+        // queueTotalSize every time we remove an item. If we get here, something is wrong.
+        // We'll handle it by resolving the read request and keep going but let's emit a log
+        // warning so we can investigate.
+        // Note that we do not want to remove the close sentinel here so that the next call to
+        // maybeDrainAndSetState will see it and handle the transition to the closed state.
+        KJ_LOG(ERROR,
+            "ValueQueue::handleRead encountered a close sentinel in the queue "
+            "with queueTotalSize > 0. This should not happen.",
+            state.queueTotalSize);
         request.resolveAsDone(js);
+        return;
       }
       KJ_CASE_ONEOF(entry, QueueEntry) {
-        request.resolve(js, entry.entry->getValue(js));
-        state.queueTotalSize -= entry.entry->getSize();
+        auto freed = kj::mv(entry);
+        state.buffer.pop_front();
+        request.resolve(js, freed.entry->getValue(js));
+        state.queueTotalSize -= freed.entry->getSize();
+        return;
       }
     }
+    KJ_UNREACHABLE;
   } else if (state.queueTotalSize == 0 && consumer.isClosing()) {
-    // Otherwise, if state.queueTotalSize is zero and isClosing() is true, we should
-    // have already drained but let's take care of that now. Specifically, in this case
-    // there's no data in the queue and close() has already been called, so there won't
-    // be any more data coming.
+    // Otherwise, if state.queueTotalSize is zero and isClosing() is true there won't be any
+    // more data coming. Just resolve the read as done and move on.
     request.resolveAsDone(js);
   } else {
     // Otherwise, push the read request into the pending readRequests. It will be
     // resolved either as soon as there is data available or the consumer closes
     // or errors.
     state.readRequests.push_back(kj::mv(request));
-    KJ_IF_MAYBE(listener, consumer.stateListener) {
-      listener->onConsumerWantsData(js);
+    KJ_IF_SOME(listener, consumer.stateListener) {
+      listener.onConsumerWantsData(js);
     }
   }
 }
 
 bool ValueQueue::handleMaybeClose(
-    jsg::Lock&js,
-    ConsumerImpl::Ready& state,
-    ConsumerImpl& consumer,
-    QueueImpl& queue) {
+    jsg::Lock& js, ConsumerImpl::Ready& state, ConsumerImpl& consumer, QueueImpl& queue) {
   // If the value queue is not yet empty we have to keep waiting for more reads to consume it.
   // Return false to indicate that we cannot close yet.
   return false;
 }
 
-size_t ValueQueue::getConsumerCount() { return impl.getConsumerCount(); }
+size_t ValueQueue::getConsumerCount() {
+  return impl.getConsumerCount();
+}
+
+bool ValueQueue::wantsRead() const {
+  return impl.wantsRead();
+}
+
+bool ValueQueue::hasPartiallyFulfilledRead() {
+  // A ValueQueue can never have a partially fulfilled read.
+  return false;
+}
+
+void ValueQueue::visitForGc(jsg::GcVisitor& visitor) {}
 
 #pragma endregion ValueQueue
 
@@ -210,55 +251,52 @@ size_t ValueQueue::getConsumerCount() { return impl.getConsumerCount(); }
 
 namespace {
 void maybeInvalidateByobRequest(kj::Maybe<ByteQueue::ByobRequest&>& req) {
-  KJ_IF_MAYBE(byobRequest, req) {
-    byobRequest->invalidate();
-    req = nullptr;
+  KJ_IF_SOME(byobRequest, req) {
+    byobRequest.invalidate();
+    // The call to byobRequest->invalidate() should have cleared the reference.
+    KJ_ASSERT(req == kj::none);
   }
 }
 }  // namespace
+
+ByteQueue::ReadRequest::ReadRequest(
+    jsg::Promise<ReadResult>::Resolver resolver, ByteQueue::ReadRequest::PullInto pullInto)
+    : resolver(kj::mv(resolver)),
+      pullInto(kj::mv(pullInto)) {}
+
+ByteQueue::ReadRequest::~ReadRequest() noexcept(false) {
+  maybeInvalidateByobRequest(byobReadRequest);
+}
 
 void ByteQueue::ReadRequest::resolveAsDone(jsg::Lock& js) {
   if (pullInto.filled > 0) {
     // There's been at least some data written, we need to respond but not
     // set done to true since that's what the streams spec requires.
-    pullInto.store.trim(pullInto.store.size() - pullInto.filled);
-    resolver.resolve(ReadResult {
-      .value = js.v8Ref(pullInto.store.createHandle(js)),
-      .done = false
-    });
+    pullInto.store.trim(js, pullInto.store.size() - pullInto.filled);
+    resolver.resolve(
+        js, ReadResult{.value = js.v8Ref(pullInto.store.getHandle(js)), .done = false});
   } else {
     // Otherwise, we set the length to zero
-    pullInto.store.trim(pullInto.store.size());
+    pullInto.store.trim(js, pullInto.store.size());
     KJ_ASSERT(pullInto.store.size() == 0);
-    resolver.resolve(ReadResult {
-      .value = js.v8Ref(pullInto.store.createHandle(js)),
-      .done = true
-    });
+    resolver.resolve(js, ReadResult{.value = js.v8Ref(pullInto.store.getHandle(js)), .done = true});
   }
   maybeInvalidateByobRequest(byobReadRequest);
 }
 
 void ByteQueue::ReadRequest::resolve(jsg::Lock& js) {
-  pullInto.store.trim(pullInto.store.size() - pullInto.filled);
-  resolver.resolve(ReadResult {
-    .value = js.v8Ref(pullInto.store.createHandle(js)),
-    .done = false
-  });
+  pullInto.store.trim(js, pullInto.store.size() - pullInto.filled);
+  resolver.resolve(js, ReadResult{.value = js.v8Ref(pullInto.store.getHandle(js)), .done = false});
   maybeInvalidateByobRequest(byobReadRequest);
 }
 
 void ByteQueue::ReadRequest::reject(jsg::Lock& js, jsg::Value& value) {
-  resolver.reject(value.getHandle(js));
+  resolver.reject(js, value.getHandle(js));
   maybeInvalidateByobRequest(byobReadRequest);
 }
 
 kj::Own<ByteQueue::ByobRequest> ByteQueue::ReadRequest::makeByobReadRequest(
-    ConsumerImpl& consumer,
-    QueueImpl& queue) {
-  // Why refcounted? One ByobReadRequest reference will be held (eventually) by
-  // an instance of ReadableStreamBYOBRequest and the other by this ReadRequest.
-  // Depending on how the read is actually fulfilled, the ByobReadRequest will
-  // be invalidated by one or the other.
+    ConsumerImpl& consumer, QueueImpl& queue) {
   auto req = kj::heap<ByobRequest>(*this, consumer, queue);
   byobReadRequest = *req;
   return kj::mv(req);
@@ -268,19 +306,29 @@ kj::Own<ByteQueue::ByobRequest> ByteQueue::ReadRequest::makeByobReadRequest(
 
 #pragma region ByteQueue::Entry
 
-ByteQueue::Entry::Entry(jsg::BackingStore store) : store(kj::mv(store)) {}
+ByteQueue::Entry::Entry(jsg::BufferSource store): store(kj::mv(store)) {}
 
-kj::ArrayPtr<kj::byte> ByteQueue::Entry::toArrayPtr() { return store.asArrayPtr(); }
+kj::ArrayPtr<kj::byte> ByteQueue::Entry::toArrayPtr() {
+  return store.asArrayPtr();
+}
 
-size_t ByteQueue::Entry::getSize() const { return store.size(); }
+size_t ByteQueue::Entry::getSize() const {
+  return store.size();
+}
+
+kj::Own<ByteQueue::Entry> ByteQueue::Entry::clone(jsg::Lock& js) {
+  return kj::heap<ByteQueue::Entry>(store.clone(js));
+}
+
+void ByteQueue::Entry::visitForGc(jsg::GcVisitor& visitor) {}
 
 #pragma endregion ByteQueue::Entry
 
 #pragma region ByteQueue::QueueEntry
 
-ByteQueue::QueueEntry ByteQueue::QueueEntry::clone() {
-  return QueueEntry {
-    .entry = kj::addRef(*entry),
+ByteQueue::QueueEntry ByteQueue::QueueEntry::clone(jsg::Lock& js) {
+  return QueueEntry{
+    .entry = entry->clone(js),
     .offset = offset,
   };
 }
@@ -290,24 +338,24 @@ ByteQueue::QueueEntry ByteQueue::QueueEntry::clone() {
 #pragma region ByteQueue::Consumer
 
 ByteQueue::Consumer::Consumer(
-    ByteQueue& queue,
-    kj::Maybe<ConsumerImpl::StateListener&> stateListener)
+    ByteQueue& queue, kj::Maybe<ConsumerImpl::StateListener&> stateListener)
     : impl(queue.impl, stateListener) {}
 
 ByteQueue::Consumer::Consumer(
-    QueueImpl& impl,
-    kj::Maybe<ConsumerImpl::StateListener&> stateListener)
+    QueueImpl& impl, kj::Maybe<ConsumerImpl::StateListener&> stateListener)
     : impl(impl, stateListener) {}
 
-void ByteQueue::Consumer::cancel(
-    jsg::Lock& js,
-    jsg::Optional<v8::Local<v8::Value>> maybeReason) {
+void ByteQueue::Consumer::cancel(jsg::Lock& js, jsg::Optional<v8::Local<v8::Value>> maybeReason) {
   impl.cancel(js, maybeReason);
 }
 
-void ByteQueue::Consumer::close(jsg::Lock& js) { impl.close(js); }
+void ByteQueue::Consumer::close(jsg::Lock& js) {
+  impl.close(js);
+}
 
-bool ByteQueue::Consumer::empty() const { return impl.empty(); }
+bool ByteQueue::Consumer::empty() const {
+  return impl.empty();
+}
 
 void ByteQueue::Consumer::error(jsg::Lock& js, jsg::Value reason) {
   impl.error(js, kj::mv(reason));
@@ -321,13 +369,16 @@ void ByteQueue::Consumer::push(jsg::Lock& js, kj::Own<Entry> entry) {
   impl.push(js, kj::mv(entry));
 }
 
-void ByteQueue::Consumer::reset() { impl.reset(); }
+void ByteQueue::Consumer::reset() {
+  impl.reset();
+}
 
-size_t ByteQueue::Consumer::size() const { return impl.size(); }
+size_t ByteQueue::Consumer::size() const {
+  return impl.size();
+}
 
 kj::Own<ByteQueue::Consumer> ByteQueue::Consumer::clone(
-    jsg::Lock& js,
-    kj::Maybe<ConsumerImpl::StateListener&> stateListener) {
+    jsg::Lock& js, kj::Maybe<ConsumerImpl::StateListener&> stateListener) {
   auto consumer = kj::heap<Consumer>(impl.queue, stateListener);
   impl.cloneTo(js, consumer->impl);
   return kj::mv(consumer);
@@ -335,6 +386,14 @@ kj::Own<ByteQueue::Consumer> ByteQueue::Consumer::clone(
 
 bool ByteQueue::Consumer::hasReadRequests() {
   return impl.hasReadRequests();
+}
+
+void ByteQueue::Consumer::cancelPendingReads(jsg::Lock& js, jsg::JsValue reason) {
+  impl.cancelPendingReads(js, reason);
+}
+
+void ByteQueue::Consumer::visitForGc(jsg::GcVisitor& visitor) {
+  visitor.visit(impl);
 }
 
 #pragma endregion ByteQueue::Consumer
@@ -346,16 +405,15 @@ ByteQueue::ByobRequest::~ByobRequest() noexcept(false) {
 }
 
 void ByteQueue::ByobRequest::invalidate() {
-  KJ_IF_MAYBE(req, request) {
-    req->byobReadRequest = nullptr;
-    request = nullptr;
+  KJ_IF_SOME(req, request) {
+    req.byobReadRequest = kj::none;
+    request = kj::none;
   }
 }
 
 bool ByteQueue::ByobRequest::isPartiallyFulfilled() {
-  return !isInvalidated() &&
-         getRequest().pullInto.filled > 0 &&
-         getRequest().pullInto.store.getElementSize() > 1;
+  return !isInvalidated() && getRequest().pullInto.filled > 0 &&
+      getRequest().pullInto.store.getElementSize() > 1;
 }
 
 bool ByteQueue::ByobRequest::respond(jsg::Lock& js, size_t amount) {
@@ -372,22 +430,27 @@ bool ByteQueue::ByobRequest::respond(jsg::Lock& js, size_t amount) {
 
   // The amount cannot be more than the total space in the request store.
   JSG_REQUIRE(req.pullInto.filled + amount <= req.pullInto.store.size(), RangeError,
-      kj::str("Too many bytes [", amount ,"] in response to a BYOB read request."));
+      kj::str("Too many bytes [", amount, "] in response to a BYOB read request."));
 
   auto sourcePtr = req.pullInto.store.asArrayPtr();
 
   if (queue.getConsumerCount() > 1) {
     // Allocate the entry into which we will be copying the provided data for the
     // other consumers of the queue.
-    auto entry = kj::refcounted<Entry>(jsg::BackingStore::alloc(js, amount));
+    KJ_IF_SOME(store, jsg::BufferSource::tryAlloc(js, amount)) {
 
-    auto start = sourcePtr.begin() + req.pullInto.filled;
+      auto entry = kj::heap<Entry>(kj::mv(store));
 
-    // Safely copy the data over into the entry.
-    std::copy(start, start + amount, entry->toArrayPtr().begin());
+      auto start = sourcePtr.begin() + req.pullInto.filled;
 
-    // Push the entry into the other consumers.
-    queue.push(js, kj::mv(entry), consumer);
+      // Safely copy the data over into the entry.
+      std::copy(start, start + amount, entry->toArrayPtr().begin());
+
+      // Push the entry into the other consumers.
+      queue.push(js, kj::mv(entry), consumer);
+    } else {
+      js.throwException(js.error("Failed to allocate memory for the byob read response."_kj));
+    }
   }
 
   // For this consumer, if the number of bytes provided in the response does not
@@ -420,9 +483,14 @@ bool ByteQueue::ByobRequest::respond(jsg::Lock& js, size_t amount) {
 
   if (unaligned > 0) {
     auto start = sourcePtr.begin() + (amount - unaligned);
-    auto excess = kj::refcounted<Entry>(jsg::BackingStore::alloc(js, unaligned));
-    std::copy(start, start + unaligned, excess->toArrayPtr().begin());
-    consumer.push(js, kj::mv(excess));
+
+    KJ_IF_SOME(store, jsg::BufferSource::tryAlloc(js, unaligned)) {
+      auto excess = kj::heap<Entry>(kj::mv(store));
+      std::copy(start, start + unaligned, excess->toArrayPtr().begin());
+      consumer.push(js, kj::mv(excess));
+    } else {
+      js.throwException(js.error("Failed to allocate memory for the byob read response."_kj));
+    }
   }
 
   return true;
@@ -438,63 +506,65 @@ bool ByteQueue::ByobRequest::respondWithNewView(jsg::Lock& js, jsg::BufferSource
   auto amount = view.size();
 
   JSG_REQUIRE(view.canDetach(js), TypeError, "Unable to use non-detachable ArrayBuffer.");
-  JSG_REQUIRE(req.pullInto.store.getOffset() + req.pullInto.filled == view.getOffset(),
-               RangeError,
-               "The given view has an invalid byte offset.");
-  JSG_REQUIRE(req.pullInto.store.size() == view.underlyingArrayBufferSize(js),
-               RangeError,
-               "The underlying ArrayBuffer is not the correct length.");
-  JSG_REQUIRE(req.pullInto.filled + amount <= req.pullInto.store.size(),
-               RangeError,
-               "The view is not the correct length.");
+  JSG_REQUIRE(req.pullInto.store.getOffset() + req.pullInto.filled == view.getOffset(), RangeError,
+      "The given view has an invalid byte offset.");
+  JSG_REQUIRE(req.pullInto.store.size() == view.underlyingArrayBufferSize(js), RangeError,
+      "The underlying ArrayBuffer is not the correct length.");
+  JSG_REQUIRE(req.pullInto.filled + amount <= req.pullInto.store.size(), RangeError,
+      "The view is not the correct length.");
 
-  req.pullInto.store = view.detach(js);
+  req.pullInto.store = jsg::BufferSource(js, view.detach(js));
   return respond(js, amount);
 }
 
 size_t ByteQueue::ByobRequest::getAtLeast() const {
-  KJ_IF_MAYBE(req, request) {
-    return req->pullInto.atLeast;
+  KJ_IF_SOME(req, request) {
+    return req.pullInto.atLeast;
   }
   return 0;
 }
 
 v8::Local<v8::Uint8Array> ByteQueue::ByobRequest::getView(jsg::Lock& js) {
-  KJ_IF_MAYBE(req, request) {
-    return req->pullInto.store.getTypedViewSlice<v8::Uint8Array>(
-      req->pullInto.filled,
-      req->pullInto.store.size()
-    ).createHandle(js).As<v8::Uint8Array>();
+  KJ_IF_SOME(req, request) {
+    return req.pullInto.store
+        .getTypedViewSlice<v8::Uint8Array>(js, req.pullInto.filled, req.pullInto.store.size())
+        .getHandle(js)
+        .As<v8::Uint8Array>();
   }
   return v8::Local<v8::Uint8Array>();
 }
 
 #pragma endregion ByteQueue::ByobRequest
 
-ByteQueue::ByteQueue(size_t highWaterMark) : impl(highWaterMark) {}
+ByteQueue::ByteQueue(size_t highWaterMark): impl(highWaterMark) {}
 
 void ByteQueue::close(jsg::Lock& js) {
+  KJ_IF_SOME(ready, impl.state.tryGet<ByteQueue::QueueImpl::Ready>()) {
+    while (!ready.pendingByobReadRequests.empty()) {
+      auto& req = ready.pendingByobReadRequests.front();
+      req->invalidate();
+      ready.pendingByobReadRequests.pop_front();
+    }
+  }
   impl.close(js);
 }
 
-ssize_t ByteQueue::desiredSize() const { return impl.desiredSize(); }
+ssize_t ByteQueue::desiredSize() const {
+  return impl.desiredSize();
+}
 
 void ByteQueue::error(jsg::Lock& js, jsg::Value reason) {
   impl.error(js, kj::mv(reason));
 }
 
 void ByteQueue::maybeUpdateBackpressure() {
-  KJ_IF_MAYBE(state, impl.getState()) {
+  KJ_IF_SOME(state, impl.getState()) {
     // Invalidated byob read requests will accumulate if we do not take
     // take of them from time to time since. Since maybeUpdateBackpressure
     // is going to be called regularly while the queue is actively in use,
     // this is as good a place to clean them out as any.
-    auto pivot KJ_UNUSED = std::remove_if(
-        state->pendingByobReadRequests.begin(),
-        state->pendingByobReadRequests.end(),
-        [](auto& item) {
-      return item->isInvalidated();
-    });
+    auto pivot KJ_UNUSED = std::remove_if(state.pendingByobReadRequests.begin(),
+        state.pendingByobReadRequests.end(), [](auto& item) { return item->isInvalidated(); });
   }
   impl.maybeUpdateBackpressure();
 }
@@ -503,16 +573,15 @@ void ByteQueue::push(jsg::Lock& js, kj::Own<Entry> entry) {
   impl.push(js, kj::mv(entry));
 }
 
-size_t ByteQueue::size() const { return impl.size(); }
+size_t ByteQueue::size() const {
+  return impl.size();
+}
 
 void ByteQueue::handlePush(
-    jsg::Lock& js,
-    ConsumerImpl::Ready& state,
-    QueueImpl& queue,
-    kj::Own<Entry> newEntry) {
+    jsg::Lock& js, ConsumerImpl::Ready& state, QueueImpl& queue, kj::Own<Entry> newEntry) {
   const auto bufferData = [&](size_t offset) {
     state.queueTotalSize += newEntry->getSize() - offset;
-    state.buffer.emplace_back(QueueEntry {
+    state.buffer.emplace_back(QueueEntry{
       .entry = kj::mv(newEntry),
       .offset = offset,
     });
@@ -563,7 +632,7 @@ void ByteQueue::handlePush(
           auto sourceSize = sourcePtr.size() - entry.offset;
 
           auto destPtr = pending.pullInto.store.asArrayPtr().begin() + pending.pullInto.filled;
-          auto destAmount = pending.pullInto.store.size() -  pending.pullInto.filled;
+          auto destAmount = pending.pullInto.store.size() - pending.pullInto.filled;
 
           // sourceSize is the amount of data remaining in the current entry to copy.
           // destAmount is the amount of space remaining to be filled in the pending read.
@@ -605,8 +674,8 @@ void ByteQueue::handlePush(
     // destination pullInto by taking the lesser of amountAvailable and
     // destination pullInto size - filled (which gives us the amount of space
     // remaining in the destination).
-    auto amountToCopy = kj::min(amountAvailable,
-                                pending.pullInto.store.size() - pending.pullInto.filled);
+    auto amountToCopy =
+        kj::min(amountAvailable, pending.pullInto.store.size() - pending.pullInto.filled);
 
     // The amountToCopy should not be more than the entry size minus the entryOffset
     // (which is the amount of data remaining to be consumed in the current entry).
@@ -615,7 +684,7 @@ void ByteQueue::handlePush(
     // The amountToCopy plus pending.pullInto.filled should be more than or equal to atLeast
     // and less than or equal pending.pullInto.store.size().
     KJ_REQUIRE(amountToCopy + pending.pullInto.filled >= pending.pullInto.atLeast &&
-               amountToCopy + pending.pullInto.filled <= pending.pullInto.store.size());
+        amountToCopy + pending.pullInto.filled <= pending.pullInto.store.size());
 
     // Awesome, so now we safely copy amountToCopy bytes from the current entry into
     // the remaining space in pending.pullInto.store, befing careful to account for
@@ -623,9 +692,8 @@ void ByteQueue::handlePush(
     // where we start copying.
     auto entryPtr = newEntry->toArrayPtr();
     auto destPtr = pending.pullInto.store.asArrayPtr().begin() + pending.pullInto.filled;
-    std::copy(entryPtr.begin() + entryOffset,
-              entryPtr.begin() + entryOffset + amountToCopy,
-              destPtr);
+    std::copy(
+        entryPtr.begin() + entryOffset, entryPtr.begin() + entryOffset + amountToCopy, destPtr);
 
     // Yay! this pending read has been fulfilled. There might be more tho. Let's adjust
     // the amountAvailable and continue trying to consume data.
@@ -654,8 +722,7 @@ void ByteQueue::handlePush(
   bufferData(entryOffset);
 }
 
-void ByteQueue::handleRead(
-    jsg::Lock& js,
+void ByteQueue::handleRead(jsg::Lock& js,
     ConsumerImpl::Ready& state,
     ConsumerImpl& consumer,
     QueueImpl& queue,
@@ -669,13 +736,13 @@ void ByteQueue::handleRead(
       // state.readRequests to create the associated ByobRequest.
       // If the queue state is nullptr here, it means the queue has already
       // been closed.
-      KJ_IF_MAYBE(queueState, queue.getState()) {
-        queueState->pendingByobReadRequests.push_back(
+      KJ_IF_SOME(queueState, queue.getState()) {
+        queueState.pendingByobReadRequests.push_back(
             state.readRequests.back().makeByobReadRequest(consumer, queue));
       }
     }
-    KJ_IF_MAYBE(listener, consumer.stateListener) {
-      listener->onConsumerWantsData(js);
+    KJ_IF_SOME(listener, consumer.stateListener) {
+      listener.onConsumerWantsData(js);
     }
   };
 
@@ -694,8 +761,8 @@ void ByteQueue::handleRead(
           // The amount to copy is the lesser of the current entry size minus
           // offset and the data remaining in the destination to fill.
           auto entrySize = entry.entry->getSize();
-          auto amountToCopy = kj::min(entrySize - entry.offset,
-                                      request.pullInto.store.size() - request.pullInto.filled);
+          auto amountToCopy = kj::min(
+              entrySize - entry.offset, request.pullInto.store.size() - request.pullInto.filled);
           auto elementSize = request.pullInto.store.getElementSize();
           if (amountToCopy > elementSize) {
             amountToCopy -= amountToCopy % elementSize;
@@ -791,10 +858,7 @@ void ByteQueue::handleRead(
 }
 
 bool ByteQueue::handleMaybeClose(
-    jsg::Lock&js,
-    ConsumerImpl::Ready& state,
-    ConsumerImpl& consumer,
-    QueueImpl& queue) {
+    jsg::Lock& js, ConsumerImpl::Ready& state, ConsumerImpl& consumer, QueueImpl& queue) {
   // This is called when we know that we are closing and we still have data in
   // the queue. We want to see if we can drain as much of it into pending reads
   // as possible. If we're able to drain all of it, then yay! We can go ahead and
@@ -949,22 +1013,22 @@ bool ByteQueue::handleMaybeClose(
 }
 
 kj::Maybe<kj::Own<ByteQueue::ByobRequest>> ByteQueue::nextPendingByobReadRequest() {
-  KJ_IF_MAYBE(state, impl.getState()) {
-    while (!state->pendingByobReadRequests.empty()) {
-      auto request = kj::mv(state->pendingByobReadRequests.front());
-      state->pendingByobReadRequests.pop_front();
+  KJ_IF_SOME(state, impl.getState()) {
+    while (!state.pendingByobReadRequests.empty()) {
+      auto request = kj::mv(state.pendingByobReadRequests.front());
+      state.pendingByobReadRequests.pop_front();
       if (!request->isInvalidated()) {
         return kj::mv(request);
       }
     }
   }
-  return nullptr;
+  return kj::none;
 }
 
 bool ByteQueue::hasPartiallyFulfilledRead() {
-  KJ_IF_MAYBE(state, impl.getState()) {
-    if (!state->pendingByobReadRequests.empty()) {
-      auto& pending = state->pendingByobReadRequests.front();
+  KJ_IF_SOME(state, impl.getState()) {
+    if (!state.pendingByobReadRequests.empty()) {
+      auto& pending = state.pendingByobReadRequests.front();
       if (pending->isPartiallyFulfilled()) {
         return true;
       }
@@ -973,8 +1037,16 @@ bool ByteQueue::hasPartiallyFulfilledRead() {
   return false;
 }
 
-size_t ByteQueue::getConsumerCount() { return impl.getConsumerCount(); }
+bool ByteQueue::wantsRead() const {
+  return impl.wantsRead();
+}
+
+size_t ByteQueue::getConsumerCount() {
+  return impl.getConsumerCount();
+}
+
+void ByteQueue::visitForGc(jsg::GcVisitor& visitor) {}
 
 #pragma endregion ByteQueue
 
-} // namespace workerd::api
+}  // namespace workerd::api

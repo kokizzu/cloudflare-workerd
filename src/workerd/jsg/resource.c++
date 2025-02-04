@@ -3,6 +3,7 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 #include "jsg.h"
+#include "setup.h"
 
 namespace workerd::jsg {
 
@@ -11,12 +12,10 @@ namespace workerd::jsg {
 void exposeGlobalScopeType(v8::Isolate* isolate, v8::Local<v8::Context> context) {
   auto global = context->Global();
 
-  const auto toObject = [context](v8::Local<v8::Value> value) {
-    return check(value->ToObject(context));
-  };
+  const auto toObject = [context](
+                            v8::Local<v8::Value> value) { return check(value->ToObject(context)); };
   const auto getInterned = [isolate, context](v8::Local<v8::Object> object, const char* s) {
-    auto name = v8Str(isolate, s, v8::NewStringType::kInternalized);
-    return check(object->Get(context, name));
+    return check(object->Get(context, v8StrIntern(isolate, s)));
   };
 
   auto constructor = getInterned(global, "constructor");
@@ -25,41 +24,44 @@ void exposeGlobalScopeType(v8::Isolate* isolate, v8::Local<v8::Context> context)
   KJ_ASSERT(check(global->Set(context, name, constructor)));
 }
 
+v8::Local<v8::Symbol> getSymbolDispose(v8::Isolate* isolate) {
+  return v8::Symbol::GetDispose(isolate);
+}
+v8::Local<v8::Symbol> getSymbolAsyncDispose(v8::Isolate* isolate) {
+  return v8::Symbol::GetAsyncDispose(isolate);
+}
+
 void throwIfConstructorCalledAsFunction(
-    const v8::FunctionCallbackInfo<v8::Value>& args,
-    const std::type_info& type) {
+    const v8::FunctionCallbackInfo<v8::Value>& args, const std::type_info& type) {
   if (!args.IsConstructCall()) {
-    throwTypeError(args.GetIsolate(), kj::str(
-        "Failed to construct '", typeName(type),
-        "': Please use the 'new' operator, this object constructor cannot be called "
-        "as a function."));
+    throwTypeError(args.GetIsolate(),
+        kj::str("Failed to construct '", typeName(type),
+            "': Please use the 'new' operator, this object constructor cannot be called "
+            "as a function."));
   }
 }
 
 void scheduleUnimplementedConstructorError(
-    const v8::FunctionCallbackInfo<v8::Value>& args,
-    const std::type_info& type) {
+    const v8::FunctionCallbackInfo<v8::Value>& args, const std::type_info& type) {
   auto isolate = args.GetIsolate();
-  isolate->ThrowError(v8Str(isolate,
+  isolate->ThrowError(v8StrIntern(isolate,
       kj::str("Failed to construct '", typeName(type), "': the constructor is not implemented.")));
 }
 
-void scheduleUnimplementedMethodError(
-    const v8::FunctionCallbackInfo<v8::Value>& args,
-    const std::type_info& type, const char* methodName) {
+void scheduleUnimplementedMethodError(const v8::FunctionCallbackInfo<v8::Value>& args,
+    const std::type_info& type,
+    const char* methodName) {
   auto isolate = args.GetIsolate();
-  isolate->ThrowError(v8Str(isolate,
+  isolate->ThrowError(v8StrIntern(isolate,
       kj::str("Failed to execute '", methodName, "' on '", typeName(type),
-              "': the method is not implemented.")));
+          "': the method is not implemented.")));
 }
 
 void scheduleUnimplementedPropertyError(
-    const v8::PropertyCallbackInfo<v8::Value>& args,
-    const std::type_info& type, const char* propertyName) {
-  auto isolate = args.GetIsolate();
-  isolate->ThrowError(v8Str(isolate,
+    v8::Isolate* isolate, const std::type_info& type, const char* propertyName) {
+  isolate->ThrowError(v8StrIntern(isolate,
       kj::str("Failed to get the '", propertyName, "' property on '", typeName(type),
-              "': the property is not implemented.")));
+          "': the property is not implemented.")));
 }
 
 }  // namespace workerd::jsg

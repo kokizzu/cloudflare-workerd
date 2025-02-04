@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "esnext",
+    "lib": ["esnext", "webworker"],
+    "strict": true,
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "sourceMap": true,
+    "paths": {
+      "@workerd/*": ["../../bazel-bin/src/workerd/*"]
+    },
+    "composite": true,
+    "declaration": true,
+    "skipLibCheck": true,
+    "allowJs": true
+  },
+  "include": ["**/*.ts"],
+  "exclude": ["wpt/**"]
+}

@@ -1,13 +1,12 @@
-import assert from "assert";
+// Copyright (c) 2022-2023 Cloudflare, Inc.
+// Licensed under the Apache 2.0 license found in the LICENSE file or at:
+//     https://opensource.org/licenses/Apache-2.0
+
+import assert from "node:assert";
 import ts from "typescript";
 import { isUnsatisfiable } from "../../generator/type";
 import { printNode } from "../../print";
-import {
-  ensureExportDeclareModifiers,
-  ensureExportModifier,
-  ensureStatementModifiers,
-  hasModifier,
-} from "../helpers";
+import { ensureStatementModifiers, hasModifier } from "../helpers";
 import { maybeGetDefines, maybeGetOverride } from "./compiler";
 
 export { compileOverridesDefines } from "./compiler";
@@ -71,7 +70,7 @@ export function createOverrideDefineTransformer(
         renames: new Map<string, string>(),
       };
       const v1 = createOverrideDefineVisitor(ctx, overrideCtx);
-      const v2 = createRenameReferencesVisitor(ctx, overrideCtx.renames);
+      const v2 = createRenameVisitor(ctx, overrideCtx.renames);
       node = ts.visitEachChild(node, v1, ctx);
       return ts.visitEachChild(node, v2, ctx);
     };
@@ -98,8 +97,8 @@ function getMemberKey(member: ts.ClassElement | ts.TypeElement): string {
   // allows instance methods to be overridden without affecting static methods
   // of the same name.
   const isStatic =
-    member.modifiers !== undefined &&
-    hasModifier(member.modifiers, ts.SyntaxKind.StaticKeyword);
+    ts.canHaveModifiers(member) &&
+    hasModifier(ts.getModifiers(member), ts.SyntaxKind.StaticKeyword);
   const keyNamespace = isStatic ? "static$" : "instance$";
 
   if (
@@ -223,7 +222,7 @@ function classToTypeElement(
 ): ts.TypeElement {
   if (ts.isMethodDeclaration(member)) {
     return ctx.factory.createMethodSignature(
-      member.modifiers,
+      ts.getModifiers(member),
       member.name,
       member.questionToken,
       member.typeParameters,
@@ -233,7 +232,7 @@ function classToTypeElement(
   }
   if (ts.isPropertyDeclaration(member)) {
     return ctx.factory.createPropertySignature(
-      member.modifiers,
+      ts.getModifiers(member),
       member.name,
       member.questionToken,
       member.type
@@ -255,7 +254,7 @@ You'll need to define a full-replacement override to a "class" if you wish to in
 // Finds and applies the override (if any) for a node, returning the new
 // potentially overridden node
 function applyOverride<
-  Node extends ts.ClassDeclaration | ts.InterfaceDeclaration
+  Node extends ts.ClassDeclaration | ts.InterfaceDeclaration,
 >(
   ctx: ts.TransformationContext,
   overrideCtx: OverrideTransformContext,
@@ -279,7 +278,10 @@ function applyOverride<
 
   if (isReplacement) {
     assert(override !== undefined);
-    return ensureStatementModifiers(ctx, override);
+    return ensureStatementModifiers(ctx, override, {
+      declare: true,
+      export: false,
+    });
   } else if (override !== undefined) {
     // Merge override into declaration. Whilst we convert all non-replacement
     // overrides to classes, this type classification is ignored when merging.
@@ -302,7 +304,7 @@ function createOverrideDefineVisitor(
   // inserted in locations of literals instead.
   // TODO(soon): work out why this happens, something to do with source ranges
   //  and invalid source files/programs maybe?
-  const copyLiteralsVisitor: ts.Visitor = (node) => {
+  const copyLiteralsVisitor: ts.Visitor<ts.Node, ts.Node> = (node) => {
     node = ts.visitEachChild(node, copyLiteralsVisitor, ctx);
     if (ts.isStringLiteral(node)) {
       return ctx.factory.createStringLiteral(node.text);
@@ -313,7 +315,12 @@ function createOverrideDefineVisitor(
     return node;
   };
 
-  return (node) => {
+  const visitor: ts.Visitor = (node) => {
+    // Visit classes and interfaces inside module declarations too
+    if (ts.isModuleDeclaration(node) || ts.isModuleBody(node)) {
+      return ts.visitEachChild(node, visitor, ctx);
+    }
+
     let defines: ts.NodeArray<ts.Statement> | undefined;
 
     if (ts.isClassDeclaration(node) && node.name !== undefined) {
@@ -321,7 +328,6 @@ function createOverrideDefineVisitor(
       node = applyOverride(ctx, overrideCtx, node, (node, override) => {
         return ctx.factory.updateClassDeclaration(
           node,
-          node.decorators,
           node.modifiers,
           override.name,
           override.typeParameters ?? node.typeParameters,
@@ -335,7 +341,6 @@ function createOverrideDefineVisitor(
         assert(override.name !== undefined);
         return ctx.factory.updateInterfaceDeclaration(
           node,
-          node.decorators,
           node.modifiers,
           override.name,
           override.typeParameters ?? node.typeParameters,
@@ -349,9 +354,12 @@ function createOverrideDefineVisitor(
 
     // Process node and defines if defined
     node = ts.visitNode(node, copyLiteralsVisitor);
-    defines = ts.visitNodes(defines, copyLiteralsVisitor);
-    defines = ts.visitNodes(defines, (node) =>
-      ensureStatementModifiers(ctx, node)
+    defines = ts.visitNodes(defines, copyLiteralsVisitor, ts.isStatement);
+    defines = ts.visitNodes(
+      defines,
+      (node) =>
+        ensureStatementModifiers(ctx, node, { declare: true, export: false }),
+      ts.isStatement
     );
 
     if (ts.isTypeAliasDeclaration(node) && isUnsatisfiable(node.type)) {
@@ -364,12 +372,14 @@ function createOverrideDefineVisitor(
       return defines == undefined ? node : [...defines, node];
     }
   };
+  return visitor;
 }
 
 // Apply previously-recorded type renames to all type references
-function createRenameReferencesVisitor(
+export function createRenameVisitor(
   ctx: ts.TransformationContext,
-  renames: Map</* from */ string, /* to */ string>
+  renames: Map</* from */ string, /* to */ string>,
+  renameClassesInterfaces = false
 ): ts.Visitor {
   const visitor: ts.Visitor = (node) => {
     // Recursively visit all nodes
@@ -411,6 +421,40 @@ function createRenameReferencesVisitor(
           ctx.factory.createIdentifier(rename),
           node.typeArguments
         );
+      }
+    }
+
+    // Rename all class and interface names
+    if (renameClassesInterfaces) {
+      if (
+        ts.isClassDeclaration(node) &&
+        node.name !== undefined &&
+        ts.isIdentifier(node.name)
+      ) {
+        const rename = renames.get(node.name.text);
+        if (rename !== undefined) {
+          return ctx.factory.updateClassDeclaration(
+            node,
+            node.modifiers,
+            ctx.factory.createIdentifier(rename),
+            node.typeParameters,
+            node.heritageClauses,
+            node.members
+          );
+        }
+      }
+      if (ts.isInterfaceDeclaration(node) && ts.isIdentifier(node.name)) {
+        const rename = renames.get(node.name.text);
+        if (rename !== undefined) {
+          return ctx.factory.updateInterfaceDeclaration(
+            node,
+            node.modifiers,
+            ctx.factory.createIdentifier(rename),
+            node.typeParameters,
+            node.heritageClauses,
+            node.members
+          );
+        }
       }
     }
 

@@ -7,90 +7,157 @@
 
 #include "jsg.h"
 #include "setup.h"
+
 #include <kj/test.h>
 
 namespace workerd::jsg::test {
 
-template <typename ContextType, typename IsolateType,
-          typename ConfigurationType = decltype(nullptr)>
+// Checks the evaluation of a blob of JS code under the given context and isolate types.
+template <typename ContextType,
+    typename IsolateType,
+    typename ConfigurationType = decltype(nullptr),
+    // HACK: We allow passing another parameter here to set the template type of
+    // ModuleRegistryImpl correctly in expectEvalModule(). This type needs to be
+    // IsolateType##_TypeWrapper, but this is difficult to derive from the IsolateType
+    // typename and only a few tests use expectEvalModule(), so providing it is optional.
+    // Previously we always provided ContextType here, which causes a subtle UBSan/vptr
+    // violation.
+    typename IsolateType_TypeWrapper = ContextType>
 class Evaluator {
-  // Checks the evaluation of a blob of JS code under the given context and isolate types.
-  //
   // TODO(cleanup): `ConfigurationType` currently can optionally be specified to fix the build
   //   in cases that the isolate includes types that require configuration, but currently the
   //   type is always default-constructed. What if you want to specify a test config?
-public:
-  explicit Evaluator(V8System& v8System) : v8System(v8System) {}
+ public:
+  explicit Evaluator(V8System& v8System): v8System(v8System) {}
 
   IsolateType& getIsolate() {
     // Slightly more efficient to only instantiate each isolate type once (17s vs. 20s):
-    static IsolateType isolate(v8System, ConfigurationType());
+    static IsolateType isolate(v8System, ConfigurationType(), kj::heap<IsolateObserver>());
     return isolate;
   }
 
+  void expectEvalModule(
+      kj::StringPtr code, kj::StringPtr expectedType, kj::StringPtr expectedValue) {
+    getIsolate().runInLockScope([&](typename IsolateType::Lock& lock) {
+      JSG_WITHIN_CONTEXT_SCOPE(lock,
+          lock.template newContext<ContextType>().getHandle(lock.v8Isolate), [&](jsg::Lock& js) {
+        // Compile code as "main" module
+        CompilationObserver observer;
+        auto modules = ModuleRegistryImpl<IsolateType_TypeWrapper>::from(js);
+        auto p = kj::Path::parse("main");
+        modules->add(p,
+            jsg::ModuleRegistry::ModuleInfo(lock, "main", code, nullptr /* compile cache */,
+                ModuleInfoCompileOption::BUNDLE, observer));
+
+        // Instantiate the module
+        auto& moduleInfo = KJ_REQUIRE_NONNULL(modules->resolve(js, p));
+        auto module = moduleInfo.module.getHandle(js);
+        jsg::instantiateModule(js, module);
+
+        // Module has to export "run" function
+        auto moduleNs = check(module->GetModuleNamespace()->ToObject(js.v8Context()));
+        auto runValue = check(moduleNs->Get(js.v8Context(), v8StrIntern(lock.v8Isolate, "run"_kj)));
+
+        v8::TryCatch catcher(js.v8Isolate);
+
+        // Run the function to get the result.
+        v8::Local<v8::Value> result;
+        if (v8::Function::Cast(*runValue)
+                ->Call(js.v8Context(), js.v8Context()->Global(), 0, nullptr)
+                .ToLocal(&result)) {
+          v8::String::Utf8Value type(js.v8Isolate, result->TypeOf(js.v8Isolate));
+          v8::String::Utf8Value value(js.v8Isolate, result);
+
+          KJ_EXPECT(*type == expectedType, *type, expectedType);
+          KJ_EXPECT(*value == expectedValue, *value, expectedValue);
+        } else if (catcher.HasCaught()) {
+          v8::String::Utf8Value message(js.v8Isolate, catcher.Exception());
+
+          KJ_EXPECT(expectedType == "throws", expectedType, catcher.Exception());
+          KJ_EXPECT(*message == expectedValue, *message, expectedValue);
+        } else {
+          KJ_FAIL_EXPECT("returned empty handle but didn't throw exception?");
+        }
+      });
+    });
+  }
+
   void expectEval(kj::StringPtr code, kj::StringPtr expectedType, kj::StringPtr expectedValue) {
-    typename IsolateType::Lock lock(getIsolate());
+    getIsolate().runInLockScope([&](typename IsolateType::Lock& lock) {
+      JSG_WITHIN_CONTEXT_SCOPE(lock,
+          lock.template newContext<ContextType>().getHandle(lock.v8Isolate), [&](jsg::Lock& js) {
+        // Create a string containing the JavaScript source code.
+        v8::Local<v8::String> source = jsg::v8Str(js.v8Isolate, code);
 
-    // Create a stack-allocated handle scope.
-    v8::HandleScope handleScope(lock.v8Isolate);
+        // Compile the source code.
+        v8::Local<v8::Script> script;
+        if (!v8::Script::Compile(js.v8Context(), source).ToLocal(&script)) {
+          KJ_FAIL_EXPECT("code didn't parse", code);
+          return;
+        }
 
-    // Create a new context.
-    v8::Local<v8::Context> context =
-        lock.template newContext<ContextType>().getHandle(lock.v8Isolate);
+        v8::TryCatch catcher(js.v8Isolate);
 
-    // Enter the context for compiling and running the hello world script.
-    v8::Context::Scope contextScope(context);
+        // Run the script to get the result.
+        v8::Local<v8::Value> result;
+        if (script->Run(js.v8Context()).ToLocal(&result)) {
+          v8::String::Utf8Value type(js.v8Isolate, result->TypeOf(js.v8Isolate));
+          v8::String::Utf8Value value(js.v8Isolate, result);
 
-    // Create a string containing the JavaScript source code.
-    v8::Local<v8::String> source = jsg::v8Str(lock.v8Isolate, code);
+          KJ_EXPECT(*type == expectedType, *type, expectedType);
+          KJ_EXPECT(*value == expectedValue, *value, expectedValue);
+        } else if (catcher.HasCaught()) {
+          v8::String::Utf8Value message(js.v8Isolate, catcher.Exception());
 
-    // Compile the source code.
-    v8::Local<v8::Script> script;
-    if (!v8::Script::Compile(context, source).ToLocal(&script)) {
-      KJ_FAIL_EXPECT("code didn't parse", code);
-      return;
-    }
-
-    v8::TryCatch catcher(lock.v8Isolate);
-
-    // Run the script to get the result.
-    v8::Local<v8::Value> result;
-    if (script->Run(context).ToLocal(&result)) {
-      v8::String::Utf8Value type(lock.v8Isolate, result->TypeOf(lock.v8Isolate));
-      v8::String::Utf8Value value(lock.v8Isolate, result);
-
-      KJ_EXPECT(*type == expectedType, *type, expectedType);
-      KJ_EXPECT(*value == expectedValue, *value, expectedValue);
-    } else if (catcher.HasCaught()) {
-      v8::String::Utf8Value message(lock.v8Isolate, catcher.Exception());
-
-      KJ_EXPECT(expectedType == "throws", expectedType, catcher.Exception());
-      KJ_EXPECT(*message == expectedValue, *message, expectedValue);
-    } else {
-      KJ_FAIL_EXPECT("returned empty handle but didn't throw exception?");
-    }
+          KJ_EXPECT(expectedType == "throws", expectedType, catcher.Exception());
+          KJ_EXPECT(*message == expectedValue, *message, expectedValue);
+        } else {
+          KJ_FAIL_EXPECT("returned empty handle but didn't throw exception?");
+        }
+      });
+    });
   }
 
   void setAllowEval(bool b) {
-    typename IsolateType::Lock lock(getIsolate());
-    lock.setAllowEval(b);
+    getIsolate().runInLockScope([&](typename IsolateType::Lock& lock) { lock.setAllowEval(b); });
   }
 
   void setCaptureThrowsAsRejections(bool b) {
-    typename IsolateType::Lock lock(getIsolate());
-    lock.setCaptureThrowsAsRejections(b);
+    getIsolate().runInLockScope(
+        [&](typename IsolateType::Lock& lock) { lock.setCaptureThrowsAsRejections(b); });
   }
 
   void runMicrotasks() {
-    typename IsolateType::Lock lock(getIsolate());
-    lock.v8Isolate->PerformMicrotaskCheckpoint();
+    getIsolate().runInLockScope([&](typename IsolateType::Lock& lock) { lock.runMicrotasks(); });
   }
 
   void runMicrotasks(typename IsolateType::Lock& lock) {
-    lock.v8Isolate->PerformMicrotaskCheckpoint();
+    lock.runMicrotasks();
   }
 
-private:
+  // Run some C++ code in a new lock and context.
+  template <typename Func>
+  void run(Func&& func) {
+    getIsolate().runInLockScope([&](typename IsolateType::Lock& lock) {
+      JSG_WITHIN_CONTEXT_SCOPE(lock,
+          lock.template newContext<ContextType>().getHandle(lock.v8Isolate), [&](jsg::Lock& js) {
+        v8::TryCatch tryCatch(js.v8Isolate);
+
+        try {
+          func(js);
+        } catch (JsExceptionThrown&) {
+          if (tryCatch.HasTerminated()) {
+            KJ_FAIL_ASSERT("TerminateExecution() was called");
+          } else {
+            KJ_ASSERT(tryCatch.HasCaught());
+            jsg::throwTunneledException(js.v8Isolate, tryCatch.Exception());
+          }
+        }
+      });
+    });
+  }
+
+ private:
   V8System& v8System;
 };
 
@@ -104,22 +171,42 @@ struct NumberBox: public Object {
     return jsg::alloc<NumberBox>(value);
   }
 
-  void increment() { value += 1; }
-  void incrementBy(double amount) { value += amount; }
-  void incrementByBox(NumberBox& amount) { value += amount.value; }
+  void increment() {
+    value += 1;
+  }
+  void incrementBy(double amount) {
+    value += amount;
+  }
+  void incrementByBox(NumberBox& amount) {
+    value += amount.value;
+  }
 
-  double add(double other) { return value + other; }
-  double addBox(NumberBox& other) { return value + other.value; }
-  Ref<NumberBox> addReturnBox(double other) { return jsg::alloc<NumberBox>(value + other); }
+  double add(double other) {
+    return value + other;
+  }
+  double addBox(NumberBox& other) {
+    return value + other.value;
+  }
+  Ref<NumberBox> addReturnBox(double other) {
+    return jsg::alloc<NumberBox>(value + other);
+  }
   double addMultiple(NumberBox& a, double b, NumberBox& c) {
     return value + a.value + b + c.value;
   }
 
-  double getValue() { return value; }
-  void setValue(double newValue) { value = newValue; }
+  double getValue() {
+    return value;
+  }
+  void setValue(double newValue) {
+    value = newValue;
+  }
 
-  Ref<NumberBox> getBoxed() { return jsg::alloc<NumberBox>(value); }
-  void setBoxed(NumberBox& newValue) { value = newValue.value; }
+  Ref<NumberBox> getBoxed() {
+    return jsg::alloc<NumberBox>(value);
+  }
+  void setBoxed(NumberBox& newValue) {
+    value = newValue.value;
+  }
 
   v8::Local<v8::Value> getBoxedFromTypeHandler(
       jsg::Lock& js, v8::Isolate*, const TypeHandler<Ref<NumberBox>>& numberBoxTypeHandler) {
@@ -148,7 +235,7 @@ struct NumberBox: public Object {
 };
 
 class BoxBox: public Object {
-public:
+ public:
   explicit BoxBox(Ref<NumberBox> inner): inner(kj::mv(inner)) {}
 
   Ref<NumberBox> inner;
@@ -157,13 +244,15 @@ public:
     return jsg::alloc<BoxBox>(jsg::alloc<NumberBox>(inner.value + add));
   }
 
-  Ref<NumberBox> getInner() { return inner.addRef(); }
+  Ref<NumberBox> getInner() {
+    return inner.addRef();
+  }
 
   JSG_RESOURCE_TYPE(BoxBox) {
     JSG_READONLY_INSTANCE_PROPERTY(inner, getInner);
   }
 
-private:
+ private:
   void visitForGc(GcVisitor& visitor) {
     visitor.visit(inner);
   }
@@ -177,8 +266,12 @@ struct ExtendedNumberBox: public NumberBox {
     return result;
   }
 
-  kj::StringPtr getText() { return text; }
-  void setText(kj::String newText) { text = kj::mv(newText); }
+  kj::StringPtr getText() {
+    return text;
+  }
+  void setText(kj::String newText) {
+    text = kj::mv(newText);
+  }
 
   kj::String text;
 

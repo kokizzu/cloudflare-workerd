@@ -7,39 +7,31 @@
 namespace workerd::api {
 
 WritableStreamController::PendingAbort::PendingAbort(
-    jsg::Lock& js,
-    jsg::PromiseResolverPair<void> prp,
-    v8::Local<v8::Value> reason,
-    bool reject)
+    jsg::Lock& js, jsg::PromiseResolverPair<void> prp, v8::Local<v8::Value> reason, bool reject)
     : resolver(kj::mv(prp.resolver)),
       promise(kj::mv(prp.promise)),
       reason(js.v8Ref(reason)),
       reject(reject) {}
 
 WritableStreamController::PendingAbort::PendingAbort(
-    jsg::Lock& js,
-    v8::Local<v8::Value> reason, bool reject)
-    : WritableStreamController::PendingAbort(
-          js,
-          js.newPromiseAndResolver<void>(),
-          reason,
-          reject) {}
+    jsg::Lock& js, v8::Local<v8::Value> reason, bool reject)
+    : WritableStreamController::PendingAbort(js, js.newPromiseAndResolver<void>(), reason, reject) {
+}
 
 void WritableStreamController::PendingAbort::complete(jsg::Lock& js) {
   if (reject) {
-    fail(reason.getHandle(js));
+    fail(js, reason.getHandle(js));
   } else {
-    maybeResolvePromise(resolver);
+    maybeResolvePromise(js, resolver);
   }
 }
 
-void WritableStreamController::PendingAbort::fail(v8::Local<v8::Value> reason) {
-  maybeRejectPromise<void>(resolver, reason);
+void WritableStreamController::PendingAbort::fail(jsg::Lock& js, v8::Local<v8::Value> reason) {
+  maybeRejectPromise<void>(js, resolver, reason);
 }
 
-kj::Maybe<WritableStreamController::PendingAbort>
-WritableStreamController::PendingAbort::dequeue(
-    kj::Maybe<WritableStreamController::PendingAbort>& maybePendingAbort) {
+kj::Maybe<kj::Own<WritableStreamController::PendingAbort>> WritableStreamController::PendingAbort::
+    dequeue(kj::Maybe<kj::Own<WritableStreamController::PendingAbort>>& maybePendingAbort) {
   return kj::mv(maybePendingAbort);
 }
 

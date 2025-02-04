@@ -1,4 +1,8 @@
-import assert from "assert";
+// Copyright (c) 2022-2023 Cloudflare, Inc.
+// Licensed under the Apache 2.0 license found in the LICENSE file or at:
+//     https://opensource.org/licenses/Apache-2.0
+
+import assert from "node:assert";
 import {
   ArrayType,
   BuiltinType_Type,
@@ -47,11 +51,18 @@ function isNullMaybe(maybe: MaybeType) {
   return maybe.getName() === "kj::Maybe";
 }
 
+// Returns `true` iff this number type represents a character
+function isCharNumber(number: NumberType) {
+  // https://github.com/cloudflare/workerd/blob/33e692f2216704b7226c8c59b1455eefedf79068/src/workerd/jsg/rtti.h#L158
+  const name = number.getName();
+  return name === "char";
+}
+
 // Returns `true` iff this number type represents a byte
 function isByteNumber(number: NumberType) {
   // https://github.com/cloudflare/workerd/blob/33e692f2216704b7226c8c59b1455eefedf79068/src/workerd/jsg/rtti.h#L160
   const name = number.getName();
-  return name === "char" || name === "unsigned char";
+  return name === "unsigned char";
 }
 
 // Returns `true` iff this number type represents `number | bigint`
@@ -63,7 +74,8 @@ function isBigNumber(number: NumberType) {
     name === "long" ||
     name === "unsigned long" ||
     name === "long long" ||
-    name === "unsigned long long"
+    name === "unsigned long long" ||
+    name === "jsg::JsBigInt"
   );
 }
 
@@ -90,12 +102,31 @@ export function isUnsatisfiable(typeNode: ts.TypeNode) {
 }
 
 // Strings to replace in fully-qualified structure names with nothing
+// `workerd` references APIs by fully qualified names such as `workerd::api::gpu::GPUFragmentState`
+// This wouldn't be all that user-friendly as a type, and so this regex captures all the
+// parts of an API name that should be removed when turning an API into a TS type
+// For instance, this turns `workerd::api::gpu::GPUFragmentState` into `GPUFragmentState`
+// If any new namespaced APIs are added, they should be added to this regex.
+// If they're _not_ added to this regex, a sane-ish fallback will be used.
+// For instance, a new hypothetical API called `workerd::api::magic::MakeASpell` would be
+// `magicMakeASpell`.
 const replaceEmpty =
-  /^workerd::api::public_beta::|^workerd::api::|^workerd::jsg::|::|[ >]/g;
+  /^workerd::api::public_beta::|^workerd::api::node::|^workerd::api::gpu::|^workerd::api::|^workerd::jsg::|::|[ >]/g;
 // Strings to replace in fully-qualified structure names with an underscore
 const replaceUnderscore = /[<,]/g;
-export function getTypeName(structure: Structure | StructureType): string {
-  let name = structure.getFullyQualifiedName();
+export function getTypeName(
+  structure: Structure | StructureType | /* fullyQualifiedName */ string
+): string {
+  let name: string;
+  if (typeof structure === "string") {
+    assert(
+      structure.includes("::"),
+      `Expected fully-qualified structure name, got "${structure}"`
+    );
+    name = structure;
+  } else {
+    name = structure.getFullyQualifiedName();
+  }
   name = name.replace(replaceEmpty, "");
   name = name.replace(replaceUnderscore, "_");
   return name;
@@ -155,19 +186,14 @@ export function createParamDeclarationNodes(
           `Expected "T[]", got "${printNode(typeNode)}"`
         );
         dotDotDotToken = f.createToken(ts.SyntaxKind.DotDotDotToken);
-      } else {
+      } else if (isUnsatisfiable(typeNode)) {
         // If this is an internal implementation type, omit it, and skip to
         // the next arg
-        assert(
-          isUnsatisfiable(typeNode),
-          `Expected "never", got "${printNode(typeNode)}"`
-        );
         continue;
       }
     }
 
     const param = f.createParameterDeclaration(
-      /* decorators */ undefined,
       /* modifiers */ undefined,
       dotDotDotToken,
       getParameterName(fullyQualifiedParentName, name, i),
@@ -193,8 +219,9 @@ export function createTypeNode(
     `"allowMethodParameterCoercion" requires "allowCoercion"`
   );
 
+  const which = type.which();
   // noinspection FallThroughInSwitchStatementJS
-  switch (type.which()) {
+  switch (which) {
     case Type_Which.UNKNOWN:
       return f.createTypeReferenceNode("any");
     case Type_Which.VOIDT:
@@ -240,7 +267,9 @@ export function createTypeNode(
     case Type_Which.ARRAY:
       const array = type.getArray();
       const element = array.getElement();
-      if (element.isNumber() && isByteNumber(element.getNumber())) {
+      if (element.isNumber() && isCharNumber(element.getNumber())) {
+        return f.createTypeReferenceNode("string");
+      } else if (element.isNumber() && isByteNumber(element.getNumber())) {
         // If the array element is a `byte`...
         if (allowCoercion) {
           // When coercion is enabled (e.g. method param), `kj::Array<byte>` and
@@ -291,6 +320,8 @@ export function createTypeNode(
           return f.createTypeReferenceNode("Uint8Array");
         case BuiltinType_Type.V8ARRAY_BUFFER_VIEW:
           return f.createTypeReferenceNode("ArrayBufferView");
+        case BuiltinType_Type.V8ARRAY_BUFFER:
+          return f.createTypeReferenceNode("ArrayBuffer");
         case BuiltinType_Type.JSG_BUFFER_SOURCE:
           return f.createUnionTypeNode([
             f.createTypeReferenceNode("ArrayBuffer"),
@@ -308,7 +339,7 @@ export function createTypeNode(
         case BuiltinType_Type.V8FUNCTION:
           return f.createTypeReferenceNode("Function");
         default:
-          assert.fail(`Unknown builtin type: ${builtin}`);
+          assert.fail(`Unknown builtin type: ${builtin satisfies never}`);
       }
     case Type_Which.INTRINSIC:
       const intrinsic = type.getIntrinsic().getName();
@@ -357,10 +388,17 @@ export function createTypeNode(
           return f.createTypeReferenceNode("never");
         case JsgImplType_Type.JSG_VARARGS:
           return f.createArrayTypeNode(f.createTypeReferenceNode("any"));
+        case JsgImplType_Type.JSG_NAME:
+          return f.createTypeReferenceNode("PropertyKey");
         default:
-          assert.fail(`Unknown JSG implementation type: ${impl}`);
+          assert.fail(
+            `Unknown JSG implementation type: ${impl satisfies never}`
+          );
       }
+    case Type_Which.JS_BUILTIN:
+      // TODO(soon): implement
+      assert.fail("`JS_BUILTIN`s are not yet supported");
     default:
-      assert.fail(`Unknown type: ${type.which()}`);
+      assert.fail(`Unknown type: ${which satisfies never}`);
   }
 }

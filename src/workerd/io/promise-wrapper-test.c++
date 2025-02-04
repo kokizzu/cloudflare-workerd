@@ -2,20 +2,19 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-#include <kj/test.h>
-
 #include <workerd/io/promise-wrapper.h>
+#include <workerd/jsg/jsg-test.h>
 #include <workerd/jsg/jsg.h>
 #include <workerd/jsg/setup.h>
-#include <workerd/jsg/jsg-test.h>
-#include <array>
+
+#include <kj/test.h>
 
 namespace workerd::jsg::test {  // workerd
 namespace {
 
 jsg::V8System v8System;
 
-struct CaptureThrowContext: public jsg::Object {
+struct CaptureThrowContext: public jsg::Object, public ContextGlobal {
   kj::Promise<int> test1() {
     JSG_FAIL_REQUIRE(TypeError, "boom");
   }
@@ -46,9 +45,7 @@ struct CaptureThrowContext: public jsg::Object {
 
   template <typename T>
   v8::Local<v8::Value> testT(jsg::Lock& js, const jsg::TypeHandler<Function<T()>>& handler) {
-    return handler.wrap(js, [](Lock&) -> T {
-      JSG_FAIL_REQUIRE(TypeError, "boom");
-    });
+    return handler.wrap(js, [](Lock&) -> T { JSG_FAIL_REQUIRE(TypeError, "boom"); });
   }
 
   static kj::Promise<void> staticTest1() {
@@ -84,9 +81,7 @@ struct CaptureThrowContext: public jsg::Object {
   }
 };
 JSG_DECLARE_ISOLATE_TYPE(
-    CaptureThrowIsolate,
-    CaptureThrowContext,
-    jsg::TypeWrapperExtension<workerd::PromiseWrapper>);
+    CaptureThrowIsolate, CaptureThrowContext, jsg::TypeWrapperExtension<workerd::PromiseWrapper>);
 
 KJ_TEST("Async functions capture sync errors with flag") {
   Evaluator<CaptureThrowContext, CaptureThrowIsolate> e(v8System);

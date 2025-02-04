@@ -26,23 +26,36 @@ let isToPathJS = true;
 
 function validateBinaryVersion(...command: string[]): void {
   command.push("--version");
-  const stdout = child_process
-    .execFileSync(command.shift()!, command, {
-      // Without this, this install script strangely crashes with the error
-      // "EACCES: permission denied, write" but only on Ubuntu Linux when node is
-      // installed from the Snap Store. This is not a problem when you download
-      // the official version of node. The problem appears to be that stderr
-      // (i.e. file descriptor 2) isn't writable?
-      //
-      // More info:
-      // - https://snapcraft.io/ (what the Snap Store is)
-      // - https://nodejs.org/dist/ (download the official version of node)
-      // - https://github.com/evanw/esbuild/issues/1711#issuecomment-1027554035
-      //
-      stdio: "pipe",
-    })
-    .toString()
-    .trim();
+  let stdout: string;
+  try {
+    stdout = child_process
+      .execFileSync(command.shift()!, command, {
+        // Without this, this install script strangely crashes with the error
+        // "EACCES: permission denied, write" but only on Ubuntu Linux when node is
+        // installed from the Snap Store. This is not a problem when you download
+        // the official version of node. The problem appears to be that stderr
+        // (i.e. file descriptor 2) isn't writable?
+        //
+        // More info:
+        // - https://snapcraft.io/ (what the Snap Store is)
+        // - https://nodejs.org/dist/ (download the official version of node)
+        // - https://github.com/evanw/esbuild/issues/1711#issuecomment-1027554035
+        //
+        stdio: [/* stdin */ "pipe", /* stdout */ "pipe", /* stderr */ "inherit"],
+      })
+      .toString()
+      .trim();
+  } catch (e) {
+    let msg = `[workerd] Failed to validate workerd binary
+
+Local development will not work. This usually means you're on an unsupported
+operating system, or missing some shared libraries.`;
+    if (process.platform === "linux") {
+      msg += " On Debian-based systems,\nmake sure you've installed the \`libc++1\` package."
+    }
+    console.error(msg);
+    return;
+  }
   if (stdout !== `workerd ${LATEST_COMPATIBILITY_DATE}`) {
     throw new Error(
       `Expected ${JSON.stringify(
@@ -177,7 +190,9 @@ function maybeOptimizePackage(binPath: string): void {
   // just running the binary executable directly.
   //
   // Here we optimize for this by replacing the JavaScript file with the binary
-  // executable at install time.
+  // executable at install time. This optimization does not work on Windows
+  // because on Windows the binary executable must be called "workerd.exe"
+  // instead of "workerd".
   //
   // This doesn't work with Yarn both because of lack of support for binary
   // files in Yarn 2+ (see https://github.com/yarnpkg/berry/issues/882) and
@@ -187,7 +202,7 @@ function maybeOptimizePackage(binPath: string): void {
   //
   // This optimization also doesn't apply when npm's "--ignore-scripts" flag is
   // used since in that case this install script will not be run.
-  if (!isYarn()) {
+  if (os.platform() !== "win32" && !isYarn()) {
     const tempPath = path.join(__dirname, "bin-workerd");
     try {
       // First link the binary with a temporary file. If this fails and throws an
@@ -222,7 +237,8 @@ async function downloadDirectlyFromNPM(
 ): Promise<void> {
   // If that fails, the user could have npm configured incorrectly or could not
   // have npm installed. Try downloading directly from npm as a last resort.
-  const url = `https://registry.npmjs.org/${pkg}/-/${pkg}-${WORKERD_VERSION}.tgz`;
+  const unscopedPkg = pkg.substring(pkg.indexOf("/") + 1);
+  const url = `https://registry.npmjs.org/${pkg}/-/${unscopedPkg}-${WORKERD_VERSION}.tgz`;
   console.error(`[workerd] Trying to download ${JSON.stringify(url)}`);
   try {
     fs.writeFileSync(
@@ -292,14 +308,11 @@ this. If that fails, you need to remove the "--no-optional" flag to use workerd.
 }
 
 checkAndPreparePackage().then(() => {
-  // Windows only runs the binary in WSL (for now), and so we can't run it directly for validation
-  if (process.platform !== "win32") {
-    if (isToPathJS) {
-      // We need "node" before this command since it's a JavaScript file
-      validateBinaryVersion(process.execPath, toPath);
-    } else {
-      // This is no longer a JavaScript file so don't run it using "node"
-      validateBinaryVersion(toPath);
-    }
+  if (isToPathJS) {
+    // We need "node" before this command since it's a JavaScript file
+    validateBinaryVersion(process.execPath, toPath);
+  } else {
+    // This is no longer a JavaScript file so don't run it using "node"
+    validateBinaryVersion(toPath);
   }
 });

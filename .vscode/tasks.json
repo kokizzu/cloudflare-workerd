@@ -2,10 +2,17 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "Bazel Build",
+      "label": "Bazel build all (dbg)",
       "type": "shell",
       "command": "bazel",
-      "args": ["build", "//src/workerd/server"],
+      "args": ["build", "-c", "dbg", "//..."],
+      "osx": {
+        // OS X needs to set the bazel `spawn_strategy` option to `local` for symbols to work
+        // correctly (https://github.com/bazelbuild/bazel/issues/6327). This `spawn_strategy`
+        // precludes the use of sandboxing during the build (see
+        // https://bazel.build/docs/user-manual#execution-strategy).
+        "args": ["build", "-c", "dbg", "--spawn_strategy=local", "//..."],
+      },
       "group": {
         "kind": "build",
         "isDefault": true
@@ -17,14 +24,61 @@
         "focus": false,
         "panel": "shared",
         "showReuseMessage": false,
-        "clear": true
+        "clear": false
       }
     },
     {
-      "label": "Bazel Build (opt)",
+      "label": "Bazel build workerd (dbg)",
       "type": "shell",
       "command": "bazel",
-      "args": ["build", "-c", "opt", "//src/workerd/server"],
+      "args": ["build", "-c", "dbg", "//src/workerd/server:workerd"],
+      "osx": {
+        // OS X needs to set the bazel `spawn_strategy` option to `local` for symbols to work
+        // correctly (https://github.com/bazelbuild/bazel/issues/6327). This `spawn_strategy`
+        // precludes the use of sandboxing during the build (see
+        // https://bazel.build/docs/user-manual#execution-strategy).
+        "args": ["build", "-c", "dbg", "--spawn_strategy=local", "//src/workerd/server:workerd"],
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": "$gcc",
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "shared",
+        "showReuseMessage": false,
+        "clear": false
+      }
+    },
+    {
+      "label": "Bazel build workerd (fastbuild)",
+      "type": "shell",
+      "command": "bazel",
+      "args": ["build", "-c", "fastbuild", "//src/workerd/server:workerd"],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": "$gcc",
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "shared",
+        "showReuseMessage": false,
+        "clear": false
+      }
+    },
+    {
+      "label": "Bazel build workerd (opt)",
+      "type": "shell",
+      "command": "bazel",
+      "args": ["build", "-c", "opt", "//src/workerd/server:workerd"],
+      // To enable debug symbols for an optimized build, add the following args for bazel:
+      // "--strategy=local", "--copt='-g'", "--cxxopt='-g'", "--host_copt='-g'", "--host_cxxopt='-g'", "--strip=never"
       "group": {
         "kind": "build",
         "isDefault": false
@@ -36,14 +90,50 @@
         "focus": false,
         "panel": "shared",
         "showReuseMessage": false,
-        "clear": true
+        "clear": false
       }
     },
     {
-      "label": "Bazel Test",
+      "label": "Bazel clean",
       "type": "shell",
       "command": "bazel",
-      "args": ["test", "--cache_test_results=no", "//..."],
+      "args": ["clean"],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "shared",
+        "showReuseMessage": false,
+        "clear": false
+      }
+    },
+    {
+      "label": "Bazel clean --expunge",
+      "type": "shell",
+      "command": "bazel",
+      "args": ["clean", "--expunge"],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "shared",
+        "showReuseMessage": false,
+        "clear": false
+      }
+    },
+    {
+      "label": "Bazel run all tests (dbg)",
+      "type": "shell",
+      "command": "bazel",
+      "args": ["test", "-c", "dbg", "--cache_test_results=no", "//..."],
       "group": {
         "kind": "test",
         "isDefault": true
@@ -55,7 +145,45 @@
         "focus": false,
         "panel": "shared",
         "showReuseMessage": false,
-        "clear": true
+        "clear": false
+      }
+    },
+    {
+      "label": "Bazel run all tests (fastbuild)",
+      "type": "shell",
+      "command": "bazel",
+      "args": ["test", "-c", "fastbuild", "--cache_test_results=no", "//..."],
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      },
+      "problemMatcher": "$gcc",
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "shared",
+        "showReuseMessage": false,
+        "clear": false
+      }
+    },
+    {
+      "label": "Bazel run all tests (opt)",
+      "type": "shell",
+      "command": "bazel",
+      "args": ["test", "-c", "opt", "--cache_test_results=no", "//..."],
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      },
+      "problemMatcher": "$gcc",
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "shared",
+        "showReuseMessage": false,
+        "clear": false
       }
     },
     {
@@ -72,15 +200,15 @@
         "panel": "dedicated"
       },
       "runOptions": {
-        "runOn": "folderOpen"
+        "runOn": "default"
       }
     },
     {
-      "label": "Generate compile_commands.json",
-      "command": "bazel",
-      "args": ["run", "//:refresh_compile_commands"],
-      "options": {
-        "cwd": "${workspaceFolder}"
+      // Create ${workspaceFolder}/external for clangd on opening VSCode.
+      "label": "Symlink external directory",
+      "command": "${workspaceFolder}/tools/unix/create-external.sh",
+      "windows": {
+        "command": "${workspaceFolder}/tools/windows/create-external.bat",
       },
       "group": "build",
       "problemMatcher": [],
@@ -89,7 +217,62 @@
         "panel": "dedicated"
       },
       "runOptions": {
+        "reevaluateOnRerun": false,
         "runOn": "folderOpen"
+      }
+    },
+    {
+      "label": "Prepare wd-test TEST_TMPDIR",
+      "detail": "Ensures a tmp directory for a wd-test exists and is empty.",
+      "command": "/bin/sh",
+      "args": [
+        "-c",
+        "'rm -rf ${workspaceFolder}/bazel-out/test_tmpdir; mkdir ${workspaceFolder}/bazel-out/test_tmpdir'",
+      ],
+      "windows": {
+        "args": [
+          "/c",
+          "'del /q/s ${workspaceFolder}/bazel-out/test_tmpdir & mkdir ${workspaceFolder}/bazel-out/test_tmpdir'"
+        ],
+      },
+      "hide": true,
+      "type": "shell",
+      "runOptions": {
+        "reevaluateOnRerun": true,
+      },
+    },
+    {
+      "label": "Prepare workerd wd-test (dbg)",
+      "dependsOn": ["Bazel build workerd (dbg)", "Prepare wd-test TEST_TMPDIR" ],
+      "dependsOrder": "sequence",
+      "group": "build",
+      "detail": "Builds a debug workerd and prepares a test directory for wd-test",
+      "hide": false,
+      "runOptions": {
+        "reevaluateOnRerun": true,
+      }
+    },
+    {
+      "label": "Generate doxygen",
+      "command": "doxygen",
+      "args": ["doxyfile"],
+      "hide": false,
+      "type": "shell",
+      "problemMatcher": []
+    },
+    {
+      "label": "Format all",
+      "command": "python3",
+      "args": [ "${workspaceFolder}/tools/cross/format.py" ],
+      "group": "build",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "never",
+        "focus": false,
+        "panel": "shared",
+      },
+      "runOptions": {
+        "reevaluateOnRerun": true,
       }
     }
   ]

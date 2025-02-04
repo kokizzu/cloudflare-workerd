@@ -3,26 +3,27 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 #include "compatibility-date.h"
-#include <kj/debug.h>
-#include <kj/test.h>
+
 #include <capnp/message.h>
 #include <capnp/serialize-text.h>
+#include <kj/debug.h>
+#include <kj/test.h>
 
 namespace workerd {
 namespace {
 
 KJ_TEST("compatibility date parsing") {
   auto expectParseTo = [](kj::StringPtr input, kj::StringPtr expected) {
-    KJ_IF_MAYBE(actual, normalizeCompatDate(input)) {
-      KJ_EXPECT(*actual == expected);
+    KJ_IF_SOME(actual, normalizeCompatDate(input)) {
+      KJ_EXPECT(actual == expected);
     } else {
       KJ_FAIL_EXPECT("couldn't parse", input);
     }
   };
 
   auto expectNoParse = [](kj::StringPtr input) {
-    KJ_IF_MAYBE(actual, normalizeCompatDate(input)) {
-      KJ_FAIL_EXPECT("expected couldn't parse", input, *actual);
+    KJ_IF_SOME(actual, normalizeCompatDate(input)) {
+      KJ_FAIL_EXPECT("expected couldn't parse", input, actual);
     }
   };
 
@@ -61,12 +62,11 @@ KJ_TEST("compatibility date parsing") {
 }
 
 KJ_TEST("compatibility flag parsing") {
-  auto expectCompileCompatibilityFlags = [](kj::StringPtr compatDate,
-      kj::ArrayPtr<const kj::StringPtr> featureFlags,
-      kj::StringPtr expectedOutput,
-      kj::ArrayPtr<const kj::StringPtr> expectedErrors = nullptr,
-      CompatibilityDateValidation dateValidation = CompatibilityDateValidation::FUTURE_FOR_TEST,
-      bool r2InternalBetaApiSet = false, bool experimental = false) {
+  auto expectCompileCompatibilityFlags =
+      [](kj::StringPtr compatDate, kj::ArrayPtr<const kj::StringPtr> featureFlags,
+          kj::StringPtr expectedOutput, kj::ArrayPtr<const kj::StringPtr> expectedErrors = nullptr,
+          CompatibilityDateValidation dateValidation = CompatibilityDateValidation::FUTURE_FOR_TEST,
+          bool r2InternalBetaApiSet = false, bool experimental = false) {
     capnp::MallocMessageBuilder message;
     auto orphanage = message.getOrphanage();
 
@@ -79,19 +79,9 @@ KJ_TEST("compatibility flag parsing") {
     auto outputOrphan = orphanage.newOrphan<CompatibilityFlags>();
     auto output = outputOrphan.get();
 
-    struct ErrorReporterImpl: public Worker::ValidationErrorReporter {
-      void addError(kj::String error) override {
-        errors.add(kj::mv(error));
-      }
-      void addHandler(kj::Maybe<kj::StringPtr> exportName, kj::StringPtr type) override {
-        KJ_UNREACHABLE;
-      }
-
-      kj::Vector<kj::String> errors;
-    };
-    ErrorReporterImpl errorReporter;
-    compileCompatibilityFlags(compatDate, flagList.asReader(), output, errorReporter, experimental,
-                              dateValidation);
+    SimpleWorkerErrorReporter errorReporter;
+    compileCompatibilityFlags(
+        compatDate, flagList.asReader(), output, errorReporter, experimental, dateValidation);
 
     capnp::TextCodec codec;
     auto parsedExpectedOutput = codec.decode<CompatibilityFlags>(expectedOutput, orphanage);
@@ -117,37 +107,34 @@ KJ_TEST("compatibility flag parsing") {
   expectCompileCompatibilityFlags("2021-11-03", {"formdata_parser_converts_files_to_strings"},
       "(formDataParserSupportsFiles = false)");
 
-  // Test feature flag overrides.
-  expectCompileCompatibilityFlags("2021-05-17", {"formdata_parser_supports_files"_kj},
-      "(formDataParserSupportsFiles = true)");
+  // Test compatibility flag overrides.
+  expectCompileCompatibilityFlags(
+      "2021-05-17", {"formdata_parser_supports_files"_kj}, "(formDataParserSupportsFiles = true)");
   expectCompileCompatibilityFlags("2021-05-17", {"fetch_refuses_unknown_protocols"_kj},
       "(fetchRefusesUnknownProtocols = true)");
   expectCompileCompatibilityFlags("2021-05-17",
       {"formdata_parser_supports_files"_kj, "fetch_refuses_unknown_protocols"_kj},
       "(formDataParserSupportsFiles = true, fetchRefusesUnknownProtocols = true)");
-  expectCompileCompatibilityFlags("2021-11-04",
-      {"fetch_refuses_unknown_protocols"_kj},
+  expectCompileCompatibilityFlags("2021-11-04", {"fetch_refuses_unknown_protocols"_kj},
       "(formDataParserSupportsFiles = true, fetchRefusesUnknownProtocols = true)");
 
   // Test errors.
-  expectCompileCompatibilityFlags("abcd", {}, "()",
-      {"Invalid compatibility date: abcd"});
+  expectCompileCompatibilityFlags("abcd", {}, "()", {"Invalid compatibility date: abcd"});
   expectCompileCompatibilityFlags("2021-05-17",
       {"formdata_parser_supports_files"_kj, "formdata_parser_supports_files"_kj},
       "(formDataParserSupportsFiles = true)",
-      {"Feature flag specified multiple times: formdata_parser_supports_files"});
+      {"Compatibility flag specified multiple times: formdata_parser_supports_files"});
   expectCompileCompatibilityFlags("2021-05-17",
       {"formdata_parser_supports_files"_kj, "formdata_parser_converts_files_to_strings"_kj},
       "(formDataParserSupportsFiles = true)",
       {"Compatibility flags are mutually contradictory: "
        "formdata_parser_supports_files vs formdata_parser_converts_files_to_strings"});
-  expectCompileCompatibilityFlags("2021-11-04",
-      {"formdata_parser_supports_files"_kj},
+  expectCompileCompatibilityFlags("2021-11-04", {"formdata_parser_supports_files"_kj},
       "(formDataParserSupportsFiles = true)",
       {"The compatibility flag formdata_parser_supports_files became the default as of "
        "2021-11-03 so does not need to be specified anymore."});
-  expectCompileCompatibilityFlags("2021-05-17", {"unknown_feature"_kj}, "()",
-      {"No such feature flag: unknown_feature"});
+  expectCompileCompatibilityFlags(
+      "2021-05-17", {"unknown_feature"_kj}, "()", {"No such compatibility flag: unknown_feature"});
 
   expectCompileCompatibilityFlags("2252-04-01", {}, "()",
       {"Can't set compatibility date in the future: 2252-04-01"},
@@ -155,7 +142,8 @@ KJ_TEST("compatibility flag parsing") {
 
   expectCompileCompatibilityFlags("2252-04-01", {}, "()",
       {kj::str("This Worker requires compatibility date \"2252-04-01\", but the newest date "
-               "supported by this server binary is \"", SUPPORTED_COMPATIBILITY_DATE, "\".")},
+               "supported by this server binary is \"",
+          SUPPORTED_COMPATIBILITY_DATE, "\".")},
       CompatibilityDateValidation::CODE_VERSION);
 
   // Test experimental requirement using durable_object_rename as it is obsolete
@@ -178,29 +166,150 @@ KJ_TEST("compatibility flag parsing") {
   // Multiple errors.
   expectCompileCompatibilityFlags("abcd",
       {"formdata_parser_supports_files"_kj, "fetch_refuses_unknown_protocols"_kj,
-       "unknown_feature"_kj, "fetch_refuses_unknown_protocols"_kj,
-       "another_feature"_kj, "formdata_parser_supports_files"_kj},
+        "unknown_feature"_kj, "fetch_refuses_unknown_protocols"_kj, "another_feature"_kj,
+        "formdata_parser_supports_files"_kj},
       "(formDataParserSupportsFiles = true, fetchRefusesUnknownProtocols = true)",
       {"Invalid compatibility date: abcd",
-       "Feature flag specified multiple times: fetch_refuses_unknown_protocols",
-       "Feature flag specified multiple times: formdata_parser_supports_files",
-       "No such feature flag: another_feature",
-       "No such feature flag: unknown_feature"});
+        "Compatibility flag specified multiple times: fetch_refuses_unknown_protocols",
+        "Compatibility flag specified multiple times: formdata_parser_supports_files",
+        "No such compatibility flag: another_feature",
+        "No such compatibility flag: unknown_feature"});
 
   // Can explicitly disable flag that's enabled for all dates.s
   expectCompileCompatibilityFlags("2021-05-17", {"r2_internal_beta_bindings"}, "()", {},
       CompatibilityDateValidation::FUTURE_FOR_TEST, true, false);
+
+  // nodejs_compat implies nodejs_compat_v2 on or after 2024-09-23
+  expectCompileCompatibilityFlags("2024-09-23", {"nodejs_compat"},
+      "(formDataParserSupportsFiles = true,"
+      " fetchRefusesUnknownProtocols = true,"
+      " esiIncludeIsVoidTag = false,"
+      " obsolete3 = false,"
+      " durableObjectFetchRequiresSchemeAuthority = true,"
+      " streamsByobReaderDetachesBuffer = true,"
+      " streamsJavaScriptControllers = true,"
+      " jsgPropertyOnPrototypeTemplate = true,"
+      " minimalSubrequests = true,"
+      " noCotsOnExternalFetch = true,"
+      " specCompliantUrl = true,"
+      " globalNavigator = true,"
+      " captureThrowsAsRejections = true,"
+      " r2PublicBetaApi = true,"
+      " obsolete14 = false,"
+      " noSubstituteNull = true,"
+      " transformStreamJavaScriptControllers = true,"
+      " r2ListHonorIncludeFields = true,"
+      " exportCommonJsDefaultNamespace = true,"
+      " obsolete19 = false,"
+      " webSocketCompression = true,"
+      " nodeJsCompat = true,"
+      " obsolete22 = false,"
+      " specCompliantResponseRedirect = true,"
+      " workerdExperimental = false,"
+      " durableObjectGetExisting = false,"
+      " httpHeadersGetSetCookie = true,"
+      " dispatchExceptionTunneling = true,"
+      " serviceBindingExtraHandlers = false,"
+      " noCfBotManagementDefault = true,"
+      " urlSearchParamsDeleteHasValueArg = true,"
+      " strictCompression = true,"
+      " brotliContentEncoding = true,"
+      " strictCrypto = true,"
+      " rttiApi = false,"
+      " webgpu = false,"
+      " cryptoPreservePublicExponent = true,"
+      " vectorizeQueryMetadataOptional = true,"
+      " unsafeModule = false,"
+      " jsRpc = false,"
+      " noImportScripts = true,"
+      " nodeJsAls = false,"
+      " queuesJsonMessages = true,"
+      " pythonWorkers = false,"
+      " fetcherNoGetPutDelete = true,"
+      " unwrapCustomThenables = true,"
+      " fetcherRpc = true,"
+      " internalStreamByobReturn = true,"
+      " blobStandardMimeType = true,"
+      " fetchStandardUrl = true,"
+      " nodeJsCompatV2 = true,"
+      " globalFetchStrictlyPublic = false,"
+      " newModuleRegistry = false,"
+      " allowCustomPorts = true,"
+      " internalWritableStreamAbortClearsQueue = true,"
+      " nodeJsZlib = true)",
+      {}, CompatibilityDateValidation::FUTURE_FOR_TEST, false, false);
+  expectCompileCompatibilityFlags("2024-09-22", {"nodejs_compat"},
+      "(formDataParserSupportsFiles = true,"
+      " fetchRefusesUnknownProtocols = true,"
+      " esiIncludeIsVoidTag = false,"
+      " obsolete3 = false,"
+      " durableObjectFetchRequiresSchemeAuthority = true,"
+      " streamsByobReaderDetachesBuffer = true,"
+      " streamsJavaScriptControllers = true,"
+      " jsgPropertyOnPrototypeTemplate = true,"
+      " minimalSubrequests = true,"
+      " noCotsOnExternalFetch = true,"
+      " specCompliantUrl = true,"
+      " globalNavigator = true,"
+      " captureThrowsAsRejections = true,"
+      " r2PublicBetaApi = true,"
+      " obsolete14 = false,"
+      " noSubstituteNull = true,"
+      " transformStreamJavaScriptControllers = true,"
+      " r2ListHonorIncludeFields = true,"
+      " exportCommonJsDefaultNamespace = true,"
+      " obsolete19 = false,"
+      " webSocketCompression = true,"
+      " nodeJsCompat = true,"
+      " obsolete22 = false,"
+      " specCompliantResponseRedirect = true,"
+      " workerdExperimental = false,"
+      " durableObjectGetExisting = false,"
+      " httpHeadersGetSetCookie = true,"
+      " dispatchExceptionTunneling = true,"
+      " serviceBindingExtraHandlers = false,"
+      " noCfBotManagementDefault = true,"
+      " urlSearchParamsDeleteHasValueArg = true,"
+      " strictCompression = true,"
+      " brotliContentEncoding = true,"
+      " strictCrypto = true,"
+      " rttiApi = false,"
+      " webgpu = false,"
+      " cryptoPreservePublicExponent = true,"
+      " vectorizeQueryMetadataOptional = true,"
+      " unsafeModule = false,"
+      " jsRpc = false,"
+      " noImportScripts = true,"
+      " nodeJsAls = false,"
+      " queuesJsonMessages = true,"
+      " pythonWorkers = false,"
+      " fetcherNoGetPutDelete = true,"
+      " unwrapCustomThenables = true,"
+      " fetcherRpc = true,"
+      " internalStreamByobReturn = true,"
+      " blobStandardMimeType = true,"
+      " fetchStandardUrl = true,"
+      " nodeJsCompatV2 = false,"
+      " globalFetchStrictlyPublic = false,"
+      " newModuleRegistry = false,"
+      " cacheOptionEnabled = false,"
+      " kvDirectBinding = false,"
+      " allowCustomPorts = true,"
+      " increaseWebsocketMessageSize = false,"
+      " internalWritableStreamAbortClearsQueue = true,"
+      " pythonWorkersDevPyodide = false,"
+      " nodeJsZlib = false)",
+      {}, CompatibilityDateValidation::FUTURE_FOR_TEST, false, false);
 }
 
 KJ_TEST("encode to flag list for FL") {
   capnp::MallocMessageBuilder message;
   auto orphanage = message.getOrphanage();
 
-  auto compileOwnFeatureFlags = [&](kj::StringPtr compatDate,
-      kj::ArrayPtr<const kj::StringPtr> featureFlags,
-      CompatibilityDateValidation dateValidation = CompatibilityDateValidation::FUTURE_FOR_TEST,
-      bool experimental = false) {
-
+  auto compileOwnFeatureFlags =
+      [&](kj::StringPtr compatDate, kj::ArrayPtr<const kj::StringPtr> featureFlags,
+          CompatibilityDateValidation dateValidation = CompatibilityDateValidation::FUTURE_FOR_TEST,
+          bool experimental = false) {
     auto flagListOrphan = orphanage.newOrphan<capnp::List<capnp::Text>>(featureFlags.size());
     auto flagList = flagListOrphan.get();
     for (auto i: kj::indices(featureFlags)) {
@@ -210,20 +319,10 @@ KJ_TEST("encode to flag list for FL") {
     auto outputOrphan = orphanage.newOrphan<CompatibilityFlags>();
     auto output = outputOrphan.get();
 
-    struct ErrorReporterImpl: public Worker::ValidationErrorReporter {
-      void addError(kj::String error) override {
-        errors.add(kj::mv(error));
-      }
-      void addHandler(kj::Maybe<kj::StringPtr> exportName, kj::StringPtr type) override {
-        KJ_UNREACHABLE;
-      }
+    SimpleWorkerErrorReporter errorReporter;
 
-      kj::Vector<kj::String> errors;
-    };
-    ErrorReporterImpl errorReporter;
-
-    compileCompatibilityFlags(compatDate, flagList.asReader(), output, errorReporter, experimental,
-                              dateValidation);
+    compileCompatibilityFlags(
+        compatDate, flagList.asReader(), output, errorReporter, experimental, dateValidation);
     KJ_ASSERT(errorReporter.errors.empty());
 
     return kj::mv(outputOrphan);
@@ -231,7 +330,7 @@ KJ_TEST("encode to flag list for FL") {
 
   {
     // Disabled by date.
-    auto featureFlagsOrphan = compileOwnFeatureFlags("2021-05-17",{});
+    auto featureFlagsOrphan = compileOwnFeatureFlags("2021-05-17", {});
     auto featureFlags = featureFlagsOrphan.get();
     auto strings = decompileCompatibilityFlagsForFl(featureFlags);
     KJ_EXPECT(strings.size() == 0);
@@ -239,7 +338,7 @@ KJ_TEST("encode to flag list for FL") {
 
   {
     // Disabled by date, enabled by flag.
-    auto featureFlagsOrphan = compileOwnFeatureFlags("2021-05-17",{"minimal_subrequests"_kj});
+    auto featureFlagsOrphan = compileOwnFeatureFlags("2021-05-17", {"minimal_subrequests"_kj});
     auto featureFlags = featureFlagsOrphan.get();
     auto strings = decompileCompatibilityFlagsForFl(featureFlags);
     KJ_EXPECT(strings.size() == 1);
@@ -248,7 +347,7 @@ KJ_TEST("encode to flag list for FL") {
 
   {
     // Enabled by date.
-    auto featureFlagsOrphan = compileOwnFeatureFlags("2022-07-01",{});
+    auto featureFlagsOrphan = compileOwnFeatureFlags("2022-07-01", {});
     auto featureFlags = featureFlagsOrphan.get();
     auto strings = decompileCompatibilityFlagsForFl(featureFlags);
     KJ_EXPECT(strings.size() == 2);
@@ -258,7 +357,7 @@ KJ_TEST("encode to flag list for FL") {
 
   {
     // Enabled by date, disabled by flag.
-    auto featureFlagsOrphan = compileOwnFeatureFlags("2022-07-01",{"cots_on_external_fetch"});
+    auto featureFlagsOrphan = compileOwnFeatureFlags("2022-07-01", {"cots_on_external_fetch"});
     auto featureFlags = featureFlagsOrphan.get();
     auto strings = decompileCompatibilityFlagsForFl(featureFlags);
     KJ_EXPECT(strings.size() == 1);
