@@ -461,7 +461,7 @@ export const readableStreamFromCancelRejectsWhenReturnRejects = {
     const rs = ReadableStream.from(iterable);
     const reader = rs.getReader();
 
-    await rejects(reader.cancel(), (err) => err === rejectError);
+    await rejects(reader.cancel(), rejectError);
   },
 };
 
