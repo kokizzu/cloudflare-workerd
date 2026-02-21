@@ -1,6 +1,8 @@
-# CLAUDE.md
+# AGENTS.md
 
 This file provides guidance to Claude Code (claude.ai/code) or Opencode (opencode.ai) when working with code in this repository.
+
+Subdirectory `AGENTS.md` files provide component-specific context (key classes, where-to-look tables, local conventions and anti-patterns).
 
 ## Instructions for AI Code Assistants
 
