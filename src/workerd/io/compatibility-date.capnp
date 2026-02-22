@@ -1064,15 +1064,14 @@ struct CompatibilityFlags @0x8f8c1b68151b6cef {
   enableNodeJsPerfHooksModule @122 :Bool
      $compatEnableFlag("enable_nodejs_perf_hooks_module")
      $compatDisableFlag("disable_nodejs_perf_hooks_module")
-     $experimental;
-     # $impliedByAfterDate(name = "nodeJsCompat", date = "2025-10-01");
+     $impliedByAfterDate(name = "nodeJsCompat", date = "2026-03-10");
    # Enables the Node.js perf_hooks module. It is required to use this flag with
    # nodejs_compat (or nodejs_compat_v2).
 
   enableGlobalPerformanceClasses @123 :Bool
      $compatEnableFlag("enable_global_performance_classes")
      $compatDisableFlag("disable_global_performance_classes")
-     $experimental;
+     $impliedByAfterDate(name = "enableNodeJsPerfHooksModule", date = "2026-03-10");
    # Enables PerformanceEntry, PerformanceMark, PerformanceMeasure, PerformanceResourceTiming,
    # PerformanceObserver and PerformanceObserverEntryList global classes.
 
@@ -1086,16 +1085,14 @@ struct CompatibilityFlags @0x8f8c1b68151b6cef {
   enableNodeJsV8Module @125 :Bool
     $compatEnableFlag("enable_nodejs_v8_module")
     $compatDisableFlag("disable_nodejs_v8_module")
-    $experimental;
-    # $impliedByAfterDate(name = "nodeJsCompat", date = "2025-10-15");
+    $impliedByAfterDate(name = "nodeJsCompat", date = "2026-03-10");
   # Enables the Node.js non-functional stub v8 module. It is required to use this flag with
   # nodejs_compat (or nodejs_compat_v2).
 
   enableNodeJsTtyModule @126 :Bool
     $compatEnableFlag("enable_nodejs_tty_module")
     $compatDisableFlag("disable_nodejs_tty_module")
-    $experimental;
-    # $impliedByAfterDate(name = "nodeJsCompat", date = "2025-10-15");
+    $impliedByAfterDate(name = "nodeJsCompat", date = "2026-03-10");
   # Enables the Node.js non-functional stub tty module. It is required to use this flag with
   # nodejs_compat (or nodejs_compat_v2).
 
@@ -1116,14 +1113,14 @@ struct CompatibilityFlags @0x8f8c1b68151b6cef {
   enableNodeJsChildProcessModule @129 :Bool
     $compatEnableFlag("enable_nodejs_child_process_module")
     $compatDisableFlag("disable_nodejs_child_process_module")
-    $experimental;
+    $impliedByAfterDate(name = "nodeJsCompat", date = "2026-03-10");
   # Enables the Node.js non-functional stub child_process module. It is required to use this
   # flag with nodejs_compat (or nodejs_compat_v2).
 
   enableNodeJsWorkerThreadsModule @130 :Bool
     $compatEnableFlag("enable_nodejs_worker_threads_module")
     $compatDisableFlag("disable_nodejs_worker_threads_module")
-    $experimental;
+    $impliedByAfterDate(name = "nodeJsCompat", date = "2026-03-10");
   # Enables the Node.js non-functional stub worker_threads module. It is required to use this
   # flag with nodejs_compat (or nodejs_compat_v2).
 
@@ -1165,14 +1162,14 @@ struct CompatibilityFlags @0x8f8c1b68151b6cef {
   enableNodeJsReadlineModule @136 :Bool
     $compatEnableFlag("enable_nodejs_readline_module")
     $compatDisableFlag("disable_nodejs_readline_module")
-    $experimental;
+    $impliedByAfterDate(name = "nodeJsCompat", date = "2026-03-10");
   # Enables the Node.js non-functional stub readline module. It is required to use this
   # flag with nodejs_compat (or nodejs_compat_v2).
 
   enableNodeJsReplModule @137 :Bool
     $compatEnableFlag("enable_nodejs_repl_module")
     $compatDisableFlag("disable_nodejs_repl_module")
-    $experimental;
+    $impliedByAfterDate(name = "nodeJsCompat", date = "2026-03-10");
   # Enables the Node.js non-functional stub repl module. It is required to use this
   # flag with nodejs_compat (or nodejs_compat_v2).
 
