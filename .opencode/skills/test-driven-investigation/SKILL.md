@@ -1,0 +1,121 @@
+---
+name: test-driven-investigation
+description: Use when investigating bugs, crashes, assertions, or unexpected behavior - requires writing a reproducing test early instead of over-analyzing source code; concrete experiments over mental models
+---
+
+# Test-Driven Investigation
+
+## Overview
+
+When investigating a bug, write a reproducing test as early as possible. Analysis without experimentation spirals into circular reasoning.
+
+**Core principle:** A 20-line test that fails tells you more than 2 hours of reading source code.
+
+## The Anti-Pattern
+
+```
+READ code → BUILD mental model → READ more code → REVISE model → READ more code →
+SECOND-GUESS model → READ same code again → ... → eventually write a test
+```
+
+This feels productive but isn't. You're pattern-matching on code without grounding in reality. Each re-read adds uncertainty, not clarity.
+
+## The Pattern
+
+```
+1. READ the error message / assertion / crash
+2. IDENTIFY the minimal trigger (what operation, on what object, in what state?)
+3. WRITE a test that sets up that state and performs that operation
+4. RUN it
+5. Let the RESULT guide the next step
+6. Iterate as needed, but always grounded in test results backed by code, not just code.
+```
+
+Steps 1-2 should take minutes, not hours. You don't need to understand the full call chain to write a test. You need to know what the entry point is and what went wrong.
+
+### Orientation
+
+Before writing the test you need to know three things: what object/API to exercise, what test file to put it in, and how to build/run it. Spend up to 10 minutes finding these. This is bounded research in service of the test -- not open-ended code analysis. If you don't know the exact API, pick the closest thing you can find and write the test anyway. A test that exercises the wrong API and passes still tells you something.
+
+## When You're Tempted to Read More Code
+
+Ask yourself:
+
+- **"Am I reading this to write a test, or to avoid writing one?"** If you can't articulate what the test would look like, that's the problem to solve -- not more reading.
+- **"Do I have a hypothesis I can test?"** If yes, test it. If no, form the simplest one possible and test that.
+- **"Do I have more than one hypothesis?"** Either pick one to test or work in parallel with several. Don't get stuck in "I need to understand everything before I can test anything" and don't try juggling multiple mental models in your head.
+- **"Am I re-reading code I already read?"** Stop. You're stuck. Write a test with your current understanding, even if it's wrong. A wrong test that runs teaches you something. A correct mental model that you never test teaches you nothing.
+- **"Am I retreading over the same path?"** If you find yourself tracing the same call stack multiple times, stop. Write a test that hits the point of failure directly. You can always adjust it later. If necessary, use a temporary tracking document to help you keep track of what you've already read so that you don't have to keep it all in your head or re-read the same code. But that document never takes priority over writing a test and running it.
+
+## Scoping the Test
+
+You don't need to reproduce the exact production scenario. You need to reproduce the _mechanism_.
+
+**Production crash:** `KJ_REQUIRE(!writeInProgress, "concurrent write()s not allowed")`
+
+**You DON'T need:** Every detail of the production call stack that potentially leads to this.
+
+**You DO need:** To find the shortest path to trigger it, even if only hypothetically.
+
+```
+Good test scope:
+  Create the pipe/adapter/object directly
+  → Put it in the suspect state
+  → Perform the operation that should fail
+  → Assert what happens
+
+Bad test scope:
+  Reproduce the entire production call stack
+  with all middleware and wrappers
+```
+
+## Forming a Hypothesis
+
+A hypothesis for a bug investigation is:
+
+> "If I do X after Y fails, Z will happen because the cleanup in Y's error path doesn't do W."
+
+It does NOT need to be:
+
+> "I have traced every code path and am certain that line 847 is the root cause because of the interaction between..."
+
+The first version is testable in 10 minutes. The second takes hours to construct and might still be wrong.
+
+## After the Test
+
+- **Test fails as expected:** You've confirmed the bug mechanism. Now you can read code _with purpose_ -- to find the fix, not to find the bug.
+- **Test passes (bug doesn't reproduce):** Your hypothesis was wrong. That's valuable. Adjust and try again. This is faster than reading code for another hour.
+- **Test crashes differently:** You found something else. Follow that trail, but do not abandon the original effort. You can have multiple parallel threads of investigation, but each should be grounded in test results, not just code reading.
+
+## Red Flags -- You're Over-Analyzing
+
+- You've read the same file/function more than twice
+- You're building a multi-level mental model of "what calls what"
+- You're writing detailed notes about code flow before writing any test code
+- You say "let me understand X before I write the test" more than once
+- You feel like you need to understand the entire system before you can test a single component
+
+## Build Times Don't Change the Priority
+
+In this codebase, a C++ compile-and-test cycle can take minutes. This does not justify delaying the test in favor of more code reading. It changes what "quick feedback" looks like:
+
+- **Fast-compiling codebase:** Write test, run, see result in seconds, iterate rapidly.
+- **Slow-compiling codebase:** Write test, start the build, use the wait time for targeted reading that serves the next iteration. The build is running -- you're not blocked, you're pipelining.
+
+The temptation with slow builds is "I should be really sure before I compile." This is the analysis spiral in disguise. A test that doesn't reproduce the bug on the first try but compiles and runs is not wasted -- it's a known-good harness you can adjust in the next cycle, often with a much faster incremental rebuild.
+
+## Applying to This Codebase
+
+workerd and its dependencies (KJ, Cap'n Proto) have extensive test infrastructure:
+
+- **KJ tests:** `KJ_TEST("description") { ... }` in `*-test.c++` files
+- **workerd tests:** `.wd-test` format for JS/TS integration tests
+- **Build/run:** `bazel test //path:target --test_arg='-f...' --test_output=all`
+
+Most KJ/capnp bugs can be reproduced with a self-contained `KJ_TEST` using public API (pipes, streams, promises, HTTP). You rarely need internal access.
+
+## The Bottom Line
+
+**Write the test. Run the test. Analyze the results. Think. Iterate.**
+
+Not the other way around.
