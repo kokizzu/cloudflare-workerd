@@ -47,6 +47,27 @@ Ask yourself:
 - **"Am I re-reading code I already read?"** Stop. You're stuck. Write a test with your current understanding, even if it's wrong. A wrong test that runs teaches you something. A correct mental model that you never test teaches you nothing.
 - **"Am I retreading over the same path?"** If you find yourself tracing the same call stack multiple times, stop. Write a test that hits the point of failure directly. You can always adjust it later. If necessary, use a temporary tracking document to help you keep track of what you've already read so that you don't have to keep it all in your head or re-read the same code. But that document never takes priority over writing a test and running it.
 
+## Start From Existing Tests
+
+Before writing a test from scratch, find existing tests for the same feature or subsystem. Search for tests that exercise the API, protocol, or code path you're investigating — not just tests in the same file as the crash site.
+
+Existing tests encode implicit knowledge you won't get from reading source code: required setup, framework-specific verification patterns, config quirks, shutdown handling. A test that's structurally wrong (missing verification, wrong config) will "pass" silently without exercising anything.
+
+**Adapt an existing working test rather than inventing one.** If an existing test works for the feature and the bug is gated by a flag, autogate, or config change, the fastest reproduction is often to clone the working test and change the single variable.
+
+## Verify the Test Exercises the Code Path
+
+A test that passes is not evidence the feature worked. It may mean the feature never ran.
+
+After every test run, check the output for evidence the specific code path was exercised — log lines mentioning the feature, subrequests being made, expected error messages, metrics being recorded. If you can't find evidence in the test output, the test is not valid regardless of its exit status.
+
+**Concrete checks:**
+
+- Does the test output mention the feature's script/worker/pipeline name?
+- Are expected subrequests or RPC calls visible in the logs?
+- If the feature produces side effects (trace delivery, storage writes, network calls), are those side effects observable?
+- If you removed the feature config entirely, would the test still pass? If yes, the test isn't testing the feature.
+
 ## Scoping the Test
 
 You don't need to reproduce the exact production scenario. You need to reproduce the _mechanism_.
@@ -94,6 +115,8 @@ The first version is testable in 10 minutes. The second takes hours to construct
 - You're writing detailed notes about code flow before writing any test code
 - You say "let me understand X before I write the test" more than once
 - You feel like you need to understand the entire system before you can test a single component
+- A test "passes" but you have no evidence the feature ran — and you're reading code to explain why instead of fixing the test
+- You've written multiple tests that all pass without reproducing the bug, and you haven't questioned whether any of them exercise the right code path
 
 ## Build Times Don't Change the Priority
 

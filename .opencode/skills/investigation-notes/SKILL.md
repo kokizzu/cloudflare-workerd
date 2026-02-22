@@ -73,7 +73,7 @@ Update the document after each significant action:
 
 - After reading a function or file section → add to "Code Read"
 - After forming or rejecting a hypothesis → update "Hypotheses"
-- After running a test → add to "Tests", update hypothesis status
+- **After running a test → update BEFORE doing anything else.** Record: what test ran, what the result was, what it means for the active hypothesis. This is non-negotiable — it takes 30 seconds and prevents the pattern of running multiple tests, losing track of what they proved, and falling back to code reading.
 - After starting a new thread of work → update "Current Focus"
 
 Do NOT update after every tool call. Do NOT polish or reorganize. Append and move on.
@@ -122,13 +122,14 @@ The human will tell you when the investigation is complete.
 
 ## Anti-Patterns
 
-| You're doing this                                                              | Do this instead                               |
-| ------------------------------------------------------------------------------ | --------------------------------------------- |
-| Writing multi-line entries                                                     | One sentence. Use `file:line`.                |
-| Dumping code into the doc                                                      | Reference it: `file:line` — "does X"          |
-| Reorganizing or reformatting the doc                                           | Append and move on                            |
-| Updating notes instead of writing a test                                       | Write the test first                          |
-| 3 `[UNTESTED]` hypotheses and no tests                                         | Pick one, write a test, run it                |
-| Re-reading a file listed in "Code Read"                                        | Use your note                                 |
-| "Current Focus" hasn't changed in a while but you're doing something different | You drifted. Update it or go back.            |
-| The doc is longer than ~50 lines                                               | You're over-documenting. Trim or start fresh. |
+| You're doing this                                                              | Do this instead                                           |
+| ------------------------------------------------------------------------------ | --------------------------------------------------------- |
+| Writing multi-line entries                                                     | One sentence. Use `file:line`.                            |
+| Dumping code into the doc                                                      | Reference it: `file:line` — "does X"                      |
+| Reorganizing or reformatting the doc                                           | Append and move on                                        |
+| Updating notes instead of writing a test                                       | Write the test first                                      |
+| 3 `[UNTESTED]` hypotheses and no tests                                         | Pick one, write a test, run it                            |
+| Re-reading a file listed in "Code Read"                                        | Use your note                                             |
+| "Current Focus" hasn't changed in a while but you're doing something different | You drifted. Update it or go back.                        |
+| You've run 2+ tests without updating the document                              | You're accumulating conclusions in your head. Update now. |
+| The doc is longer than ~50 lines                                               | You're over-documenting. Trim or start fresh.             |

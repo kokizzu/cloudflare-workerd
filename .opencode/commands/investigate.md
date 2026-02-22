@@ -3,7 +3,7 @@ description: Investigate a bug from a Sentry issue or error description, biasing
 subtask: false
 ---
 
-Load the `test-driven-investigation`, `investigation-notes`, and `parent-project-skills` skills, then investigate: $ARGUMENTS
+Load the `test-driven-investigation`, `investigation-notes`, `find-and-run-tests`, and `parent-project-skills` skills, then investigate: $ARGUMENTS
 
 ## Prerequisites
 
@@ -43,7 +43,9 @@ Find three things:
 
 2. **The test file.** Use `/find-test` on the source file containing the crash site. If no test exists, identify the nearest test file in the same directory.
 
-3. **The build command.** Construct the exact `bazel test` invocation to run a single test case from that test file.
+3. **Existing feature tests.** Search for existing tests that exercise the _feature_ involved in the bug — not just tests near the crash site file. The crash may be in `pipeline.c++` but the relevant working test may be an integration test in a completely different directory. These existing tests encode setup, verification, and framework patterns you need. They are your starting template.
+
+4. **The build command.** Construct the exact `bazel test` invocation to run a single test case from that test file.
 
 **Output to user:** The crash site with a one-sentence explanation of the invariant, the test file path, and the build command.
 
@@ -59,10 +61,13 @@ Ask for clarification or additional details if you cannot form a hypothesis with
 
 ### 4. Write the test
 
-Write a test that:
+**Start from an existing test if one exists** (from step 2.3). Clone it and modify the single variable that your hypothesis targets (disable an autogate, change a config flag, alter the setup). This is almost always faster and more correct than writing from scratch, because existing tests already have the right verification (subrequest checks, expected log patterns, shutdown handling).
+
+If no existing test is suitable, write a new one that:
 
 - Sets up the minimum state to reach the crash site
 - Performs the operation described in the hypothesis
+- **Includes observable verification** — the test must check that the feature actually ran, not just that nothing crashed. Use subrequest expectations, check for feature-specific log lines, or verify side effects.
 - Asserts the expected behavior (what _should_ happen if the bug didn't exist)
 
 Keep it short. Prefer public API. Do not try to reproduce the full production call stack.
@@ -76,12 +81,15 @@ While waiting for the build:
 - Read code that would inform the **next** test iteration if this one doesn't reproduce the bug
 - Do NOT use the wait time to second-guess the current test
 
-### 6. Iterate
+### 6. Validate and iterate
+
+**After every test run, first:** Update the tracking document (if using one). Then check the test output for evidence the code path was exercised — feature-specific log lines, subrequests, RPC calls. A test that passes with no evidence the feature ran is not a valid result.
 
 Based on the result:
 
 - **Test fails as expected** → the mechanism is confirmed. Report findings to the user. Read code with purpose to find the fix, not to find the bug.
-- **Test passes** → hypothesis was wrong. Adjust the hypothesis, update the test, run again. Tell the user what you learned.
+- **Test passes with evidence the feature ran** → hypothesis was wrong. Adjust the hypothesis, update the test, run again. Tell the user what you learned.
+- **Test passes with NO evidence the feature ran** → the test is not exercising the code path. Do not read more source code to explain why. Fix the test first — compare it against existing working tests to find what's missing.
 - **Test doesn't compile** → fix the compilation error and rerun. This is not a setback, it's a normal part of the process.
 - **Test crashes differently** → follow the new trail but note the divergence. Tell the user.
 
@@ -102,3 +110,4 @@ When the mechanism is confirmed, output:
 - **Do not re-read the same function more than twice.** If you catch yourself doing this, write a test immediately.
 - **Do not try to trace the full call stack before writing a test.** The test will tell you if your understanding is correct.
 - **Every hypothesis must be tested, not just reasoned about.**
+- **Update the tracking document with each iteration.** If a tracking document is being used, update the hypotheses, code read, and test results sections so you have a clear record of your investigation process. Particularly after compaction, if the tracking document is outdated, update it before coninuing to the next step.
