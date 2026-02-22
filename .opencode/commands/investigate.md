@@ -1,0 +1,104 @@
+---
+description: Investigate a bug from a Sentry issue or error description, biasing toward writing a reproducing test early
+subtask: false
+---
+
+Load the `test-driven-investigation`, `investigation-notes`, and `parent-project-skills` skills, then investigate: $ARGUMENTS
+
+## Prerequisites
+
+This command uses Sentry MCP tools when given a Sentry issue ID or URL. The Sentry MCP connection requires a user-specific `X-Sentry-Token` header configured in `~/.config/opencode/opencode.json` under `mcp.sentry.headers`. If the Sentry tools fail with auth errors, tell the user to check their token configuration and stop — do not guess at issue details.
+
+## Parsing the argument
+
+The argument can be:
+
+- **A Sentry issue ID** (e.g., `6181478`) — fetch from Sentry
+- **A Sentry short ID** (e.g., `EDGEWORKER-RUNTIME-4MS`) — fetch from Sentry
+- **A Sentry URL** (e.g., `https://sentry.io/organizations/.../issues/...`) — extract the issue ID, fetch from Sentry
+- **A plain text description** (e.g., `"concurrent write()s not allowed" in kj/compat/http.c++`) — skip Sentry, go straight to orientation
+
+## Steps
+
+### 1. Extract the error (5 minutes max)
+
+**If Sentry issue:**
+
+1. Fetch the issue details with `sentry_get_sentry_issue`.
+2. Fetch the most recent event with `sentry_list_sentry_issue_events` (limit 1), then `sentry_get_sentry_event` to get the full stack trace.
+3. Extract:
+   - The **error message** (assertion text, exception message, crash description)
+   - The **assertion/crash site** (file and line from the top of the stack)
+   - The **entry point** (the outermost workerd/KJ/capnp frame in the stack — where the operation started)
+
+**If plain text:** Parse the error message and file reference from the description.
+
+**Output to user:** The error message, crash site, and entry point. One short paragraph. Do not go deeper yet.
+
+### 2. Orient (10 minutes max)
+
+Find three things:
+
+1. **The crash site source.** Read the assertion/crash line and its immediate context (~50 lines). Understand what invariant was violated and what state would cause it.
+
+2. **The test file.** Use `/find-test` on the source file containing the crash site. If no test exists, identify the nearest test file in the same directory.
+
+3. **The build command.** Construct the exact `bazel test` invocation to run a single test case from that test file.
+
+**Output to user:** The crash site with a one-sentence explanation of the invariant, the test file path, and the build command.
+
+### 3. Hypothesize
+
+Form a hypothesis in the format:
+
+> "If I do X after Y, Z will happen because W."
+
+This does not need to be correct. It needs to be testable. State it to the user.
+
+Ask for clarification or additional details if you cannot form a hypothesis with the information you have. But do not ask for more information just to delay writing a test.
+
+### 4. Write the test
+
+Write a test that:
+
+- Sets up the minimum state to reach the crash site
+- Performs the operation described in the hypothesis
+- Asserts the expected behavior (what _should_ happen if the bug didn't exist)
+
+Keep it short. Prefer public API. Do not try to reproduce the full production call stack.
+
+### 5. Run the test
+
+Build and run using the command from step 2. **Start the build immediately.** Do not read more code before starting the build.
+
+While waiting for the build:
+
+- Read code that would inform the **next** test iteration if this one doesn't reproduce the bug
+- Do NOT use the wait time to second-guess the current test
+
+### 6. Iterate
+
+Based on the result:
+
+- **Test fails as expected** → the mechanism is confirmed. Report findings to the user. Read code with purpose to find the fix, not to find the bug.
+- **Test passes** → hypothesis was wrong. Adjust the hypothesis, update the test, run again. Tell the user what you learned.
+- **Test doesn't compile** → fix the compilation error and rerun. This is not a setback, it's a normal part of the process.
+- **Test crashes differently** → follow the new trail but note the divergence. Tell the user.
+
+Repeat until the bug mechanism is confirmed or you've exhausted reasonable hypotheses (at which point, report what you've tried and what you've ruled out).
+
+### 7. Report
+
+When the mechanism is confirmed, output:
+
+- **Bug summary**: One paragraph describing the root cause
+- **Reproduction**: The test name and how to run it
+- **Crash site**: `file:line` with explanation
+- **Suggested fix direction**: Where the fix likely needs to go (if apparent from the test results)
+
+## Rules
+
+- **Do not spend more than 15 minutes reading code before the first test is written and building.** If you hit 15 minutes, write whatever test you can with your current understanding.
+- **Do not re-read the same function more than twice.** If you catch yourself doing this, write a test immediately.
+- **Do not try to trace the full call stack before writing a test.** The test will tell you if your understanding is correct.
+- **Every hypothesis must be tested, not just reasoned about.**
