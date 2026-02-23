@@ -41,5 +41,5 @@ jobs:
         with:
           model: 'cloudflare-ai-gateway/anthropic/claude-opus-4-6'
           forks: 'false'
-          permissions: CODEOWNERS
+          permissions: write
           prompt: ${{ steps.prompt.outputs.value }}
