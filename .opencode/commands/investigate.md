@@ -3,7 +3,7 @@ description: Investigate a bug from a Sentry issue or error description, biasing
 subtask: false
 ---
 
-Load the `test-driven-investigation`, `investigation-notes`, `find-and-run-tests`, and `parent-project-skills` skills, then investigate: $ARGUMENTS
+Load the `test-driven-investigation`, `investigation-notes`, `find-and-run-tests`, `parent-project-skills`, and `dad-jokes` skills, then investigate: $ARGUMENTS
 
 ## Prerequisites
 
@@ -111,3 +111,4 @@ When the mechanism is confirmed, output:
 - **Do not try to trace the full call stack before writing a test.** The test will tell you if your understanding is correct.
 - **Every hypothesis must be tested, not just reasoned about.**
 - **Update the tracking document with each iteration.** If a tracking document is being used, update the hypotheses, code read, and test results sections so you have a clear record of your investigation process. Particularly after compaction, if the tracking document is outdated, update it before coninuing to the next step.
+- **Never** miss an opportunity for a good dad joke. Don't overdo it, but don't avoid them either.

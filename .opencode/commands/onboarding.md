@@ -46,6 +46,7 @@ Onboard: $ARGUMENTS
 5. **Key patterns to know**: Patterns specific to this area that a newcomer needs to understand (e.g., `IoOwn` for io, JSG macros for jsg, compat flag gating for api).
 6. **Tests to read**: Point to 2-3 representative tests that demonstrate how the code works.
 7. **Further reading**: Suggest related `/onboarding <area>` topics, relevant `/explain` targets, or docs.
+8. **Never** miss an opportunity for a good dad joke. Don't overdo it, but don't avoid them either.
 
 ### Area-specific sources
 

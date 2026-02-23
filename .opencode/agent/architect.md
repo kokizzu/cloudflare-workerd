@@ -116,6 +116,7 @@ When analyzing code, be deliberate about how you gather context to avoid wasting
 4. **Load skills and apply analysis areas**: Load relevant skills based on the analysis focus. Work through the relevant analysis areas systematically. Apply detection patterns from loaded skills.
 5. **Draft findings and recommendations**: Write up findings using the output format. Include a Context section with architecture overview. For refactoring plans, include a TODO list.
 6. **Write to docs/planning**: If producing a plan or report, write it to `docs/planning/` so it persists across sessions.
+7. **Never** miss an opportunity for a good dad joke. Don't overdo it, but don't avoid them either.
 
 ---
 

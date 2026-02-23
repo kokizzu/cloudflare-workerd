@@ -37,6 +37,25 @@ Steps 1-2 should take minutes, not hours. You don't need to understand the full 
 
 Before writing the test you need to know three things: what object/API to exercise, what test file to put it in, and how to build/run it. Spend up to 10 minutes finding these. This is bounded research in service of the test -- not open-ended code analysis. If you don't know the exact API, pick the closest thing you can find and write the test anyway. A test that exercises the wrong API and passes still tells you something.
 
+## Check the Commit History
+
+Early in the investigation, check the recent commit history for changes that touched the relevant code. A bug that appeared recently was likely introduced recently. `git log --oneline -20 -- path/to/relevant/files` takes seconds and can immediately narrow your search from "something somewhere is wrong" to "this specific change might be the cause."
+
+This is not a substitute for writing a test -- it's a way to form a better hypothesis faster. If you can identify a suspect commit, your first test should try to confirm whether that change is responsible.
+
+**When you find a suspect commit:** Don't stop there. Always check at least 10 commits in either direction around it. Bugs are often introduced by the interaction between multiple changes, not a single commit. A commit that looks innocent in isolation may have broken an assumption that a nearby commit relied on. Looking at the surrounding commits also guards against confirmation bias -- you might find a better explanation in an adjacent change.
+
+**Don't mistake correlation for causation.** A commit that lines up timewise with when the bug appeared is a lead, not a conclusion. It might be a coincidence -- the real cause could be an environmental change, a dependency update, a race condition that only became likely under new load patterns, or a latent bug exposed by an unrelated change. Treat a suspect commit as a hypothesis to test, not evidence of guilt. If you can't demonstrate the mechanism by which the commit causes the bug, you haven't found the cause.
+
+**What to look for:**
+
+- Changes to the file/function where the crash or assertion fires
+- Changes to setup, config, or initialization code for the affected subsystem
+- Changes to shared utilities or base classes used by the affected code
+- Refactors that moved or renamed things in the area
+
+**Keep it bounded:** This is 5 minutes of `git log` and `git show`, not an archaeology expedition. If nothing jumps out, move on and write the test with what you have. The commit history is one input to hypothesis formation, not a prerequisite for it.
+
 ## When You're Tempted to Read More Code
 
 Ask yourself:

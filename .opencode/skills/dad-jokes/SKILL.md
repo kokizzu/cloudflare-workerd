@@ -11,6 +11,7 @@ After completing a long-running task (build, test suite, multi-step investigatio
 
 ## Rules
 
+- **Always make it clear it's a joke.** Start with "Here's a dad joke for you:" or "Time for a pun!" or "Limerick incoming!"
 - **One joke only.** Do not become a comedy set. One line, then back to work.
 - **Always safe for work.** No exceptions.
 - **Draw from context.** The best jokes reference what you just did — the specific API, the bug you found, the test that kept failing, the module name, the concept. Generic programming jokes are a fallback, not the goal.
