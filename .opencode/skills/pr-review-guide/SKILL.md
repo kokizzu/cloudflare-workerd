@@ -9,6 +9,17 @@ Load this skill when posting review comments on a GitHub pull request.
 
 ---
 
+### Line Number Tracking
+
+When analyzing a PR diff, **record exact file paths and line numbers for every finding as you go.** Each finding must include the precise `path` and `line` (and `start_line` for multi-line ranges) needed to post a GitHub review comment — these are line numbers in the _new_ file (right side of the diff). Do not defer line number resolution to a later step; the review output should be directly usable for posting comments without re-reading the diff.
+
+When the review is performed by a sub-agent, the agent's returned findings must include these fields per finding so the caller can post comments immediately:
+
+- `path`: file path relative to repo root
+- `line`: line number in the new file (end line for multi-line)
+- `start_line` (optional): start line for multi-line comments
+- `body`: the comment text, ready to post
+
 ### Posting Review Comments
 
 When asked to review a pull request, you may use the GitHub CLI tool to post inline comments on the PR with specific feedback for each issue you identify. Do not make code changes yourself, but you can suggest specific code changes in your comments. Be sure to reference specific lines of code in your comments for clarity.
@@ -45,6 +56,11 @@ When reviewing a PR, check prior review comments (from any reviewer) that have b
   - **Recommendation**: Address the original feedback before merging.
 
 Do not flag resolved comments where the concern has been legitimately addressed, even if addressed differently than the reviewer suggested.
+
+### Tone
+
+- **Do not editorialize.** No praise, no compliments on the approach, no filler like "nice fix!" or "solid solution." The review body and inline comments should contain only findings, questions, and actionable feedback. Let the findings speak for themselves.
+- The review body should be a concise summary of findings (a bulleted list is fine) plus the AI-generated disclaimer. Nothing else.
 
 ### Etiquette
 
