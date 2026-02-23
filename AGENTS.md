@@ -6,11 +6,11 @@ Subdirectory `AGENTS.md` files provide component-specific context (key classes, 
 
 ## Instructions for AI Code Assistants
 
-- Suggest updates to CLAUDE.md when you find new high-level information
+- Suggest updates to AGENTS.md when you find new high-level information
 - You should always determine if the current repository was checked out standalone or as a submodule
   of the larger workers project.
 - If checked out as a submodule, be aware that there is additional documentation and context in the
-  root of that repository that is not present here. Look for the `../../README.md`, `../../CLAUDE.md`,
+  root of that repository that is not present here. Look for the `../../README.md`, `../../AGENTS.md`,
   and other markdown files in the root of the parent repository.
 
 ## Project Overview

@@ -119,7 +119,7 @@ Analyze the changes for:
 
 - Are code comments adequate for complex logic?
 - Do public APIs have proper documentation?
-- Are there CLAUDE.md or README updates needed?
+- Are there AGENTS.md or README updates needed?
 
 ### 3. Pre-submission Checks
 

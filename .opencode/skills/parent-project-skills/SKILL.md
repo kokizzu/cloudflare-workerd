@@ -15,7 +15,7 @@ This project (workerd) may be embedded as a submodule within a larger project. W
 
 2. Check for parent project skills:
    - Look for `../../.opencode/skills/*/SKILL.md`
-   - Read any `../../AGENTS.md` or `../../CLAUDE.md` for project-wide context
+   - Read any `../../AGENTS.md` or `../../AGENTS.md` for project-wide context
 
 3. Load relevant skills by reading the SKILL.md files. These are not registered in the `skill` tool — read them directly with the Read tool.
 
@@ -33,7 +33,7 @@ You MUST enforce a strict one-way information boundary:
   - Code comments referencing internal systems, services, or architecture
   - Commit messages mentioning internal projects, Sentry issues, Jira tickets, or internal URLs
   - PR descriptions or GitHub issue comments containing internal context
-  - AGENTS.md, CLAUDE.md, or documentation updates with internal knowledge
+  - AGENTS.md, AGENTS.md, or documentation updates with internal knowledge
   - Variable names, error messages, or log strings that reveal internal details
   - Test files that encode internal architecture assumptions
 
