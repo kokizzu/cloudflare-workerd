@@ -29,13 +29,59 @@ Onboard: $ARGUMENTS
    - `/onboarding io` — I/O context, ownership, worker lifecycle
    - `/onboarding actors` — Durable Objects, storage, gates
    - `/onboarding jsg` — V8 bindings, JSG macros, type registration
+   - `/onboarding just` — `just` command runner: available recipes and aliases
    - `/onboarding build` — Bazel, dependencies, test formats
    - `/onboarding server` — Config, services, networking
+   - `/onboarding ai` — Custom AI commands, skills, agents, and tools available in this project
    - `/onboarding <area>` — Guided walkthrough of a specific area
 
    Keep this concise — just the menu, don't explain each area in detail.
 
 **If an argument is provided, give a guided walkthrough of that area:**
+
+### Special area: `ai`
+
+If the argument is `ai`, dynamically discover and present all custom AI tooling configured for this project. Do NOT hard-code any names or descriptions — read them from the filesystem so the output stays current as files are added or removed.
+
+**Discovery steps:**
+
+1. **Commands** — List `.opencode/commands/`. For each `.md` file, read the YAML frontmatter and extract the `description` field. Present as a table: command name (derived from filename without `.md`, prefixed with `/`) and description.
+
+2. **Skills** — List `.opencode/skills/`. For each subdirectory, read `SKILL.md` inside it and extract the `name` and `description` from the YAML frontmatter. Present as a table: skill name and description.
+
+3. **Agents** — List `.opencode/agent/`. For each `.md` file, read the YAML frontmatter and extract the `description` and `mode` fields. Present as a table: agent name (derived from filename without `.md`), mode, and description.
+
+4. **Tools** — List `.opencode/tools/`. For each `.ts` file (excluding files that don't export a `tool()`), read the file and extract the `description` string from the `tool({description: ...})` call. Present as a table: tool name (derived from filename without `.ts`) and description.
+
+**Output format:**
+
+Present each category with a brief intro explaining what it is and how to use it:
+
+- **Commands**: Invoked with `/command-name [args]` in the chat. These are project-specific slash commands.
+- **Skills**: Loaded automatically or on demand to provide domain-specific instructions. Users don't invoke these directly — the AI loads them when relevant.
+- **Agents**: Specialized AI modes with different permissions and focuses (e.g., read-only architect vs. code-writing build agent).
+- **Tools**: Custom tools the AI can call during tasks. Users don't invoke these directly — the AI uses them as needed.
+
+After presenting all four categories, suggest a few "what next" pointers (e.g., "try `/onboarding architecture` to learn the codebase structure" or "try `/explain <class>` to understand a specific class").
+
+Skip the general approach steps below — this area does not involve a code walkthrough.
+
+### Special area: `just`
+
+If the argument is `just`, read the `justfile` at the project root and present a quick reference of the `just` command runner and all available recipes.
+
+**Output format:**
+
+1. **Brief intro**: Explain that workerd uses [`just`](https://github.com/casey/just) as a command runner (like `make` but simpler, no build graph, just commands). Mention that running `just` with no arguments lists all recipes.
+
+2. **Recipes table**: Read the `justfile` and present all recipes organized by category. For each recipe, show the command (including aliases where defined), parameters with defaults, and a short description (derived from comments or the recipe body). Group into logical categories (e.g., "Core workflows", "Testing shortcuts", "Sanitizers & analysis", "Benchmarks & profiling", "Setup & maintenance").
+
+3. **Tips**: Include a few practical tips:
+   - Aliases (e.g., `just b` = `just build`)
+   - `just watch <recipe>` to auto-rerun on file changes
+   - Default args (e.g., `just build` builds everything, `just build //src/workerd/api/...` builds a subtree)
+
+Skip the general approach steps below — this area does not involve a code walkthrough.
 
 ### General approach for all areas
 
