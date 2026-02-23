@@ -15,6 +15,8 @@ During bug investigations, maintain a lightweight scratch document as external m
 
 Create `~/tmp/investigate-<short-name>.md` during orientation (step 2 of `/investigate`). The short name should be descriptive enough to identify the investigation (e.g., `investigate-concurrent-write.md`, `investigate-pipe-zombie-state.md`).
 
+**Do not** create the document preemptively for every investigation. Refer to the rules below for when to create it.
+
 ### Format
 
 ```markdown
@@ -55,8 +57,6 @@ Create `~/tmp/investigate-<short-name>.md` during orientation (step 2 of `/inves
 ## Rules
 
 ### Creation
-
-Do not create the document preemptively for every investigation. Many bugs are straightforward and don't need it.
 
 **Create the document when you notice any of these:**
 

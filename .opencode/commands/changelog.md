@@ -27,17 +27,7 @@ Steps:
    git log origin/main..HEAD --format='%h %s%n%n%b'
    ```
 
-4. **Categorize changes** by area. Use these categories based on the files changed:
-   - **API** — `src/workerd/api/` changes
-   - **Node.js compat** — `src/workerd/api/node/` or `src/node/` changes
-   - **I/O** — `src/workerd/io/` changes
-   - **JSG** — `src/workerd/jsg/` changes
-   - **Server** — `src/workerd/server/` changes
-   - **Build** — `build/`, `MODULE.bazel`, `BUILD.bazel` changes
-   - **Types** — `types/` changes
-   - **Tests** — test-only changes
-   - **Docs** — documentation-only changes
-   - **Other** — anything that doesn't fit above
+4. **Categorize changes.** You MUST load the `commit-categories` skill before categorizing. Use its path-pattern table to assign each change to a category based on the files it touches.
 
 5. **Draft the summary.** For each category with changes:
    - One bullet per logical change (not per commit — squash related commits into one bullet)
@@ -65,3 +55,5 @@ Steps:
    ```
 
    If the user's arguments request a specific format (e.g., "for release notes", "for PR"), adjust the tone accordingly. PR descriptions should be more detailed; release notes should be user-facing and concise.
+
+   **IMPORTANT:** The output is meant to be copied into a PR or release notes. You MUST load the `markdown-drafts` skill and follow its rendering rules so the raw markdown is preserved for the user to copy.

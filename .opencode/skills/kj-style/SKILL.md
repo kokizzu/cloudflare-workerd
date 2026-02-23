@@ -13,9 +13,35 @@ pragmatic exceptions are fine.
 
 ---
 
+### MANDATORY: Load Reference Files When Relevant
+
+This skill is split across multiple files for context efficiency. The core rules below cover
+the most common patterns. Detailed examples and code patterns live in reference files.
+
+**You MUST read the relevant reference files before writing or reviewing code that touches
+their subject matter. Do not rely on memory or general knowledge — the reference files contain
+project-specific patterns and idioms that override general C++ conventions. Skipping a relevant
+reference file WILL lead to incorrect suggestions.**
+
+| File                            | MUST load when...                                                       |
+| ------------------------------- | ----------------------------------------------------------------------- |
+| `reference/api-patterns.md`     | Code uses or should use `kj::Maybe`, `kj::OneOf`, `kj::str()`,          |
+|                                 | `KJ_DEFER`, `KJ_SYSCALL`, `kj::downcast`, or KJ iteration helpers       |
+| `reference/async-patterns.md`   | Code involves `kj::Promise`, `.then()`, `.attach()`,                    |
+|                                 | `.eagerlyEvaluate()`, coroutines, `kj::MutexGuarded`, or `kj::TaskSet`  |
+| `reference/type-design.md`      | Designing new classes, reviewing class hierarchies, analyzing constness |
+|                                 | or thread safety semantics, or deciding value-type vs resource-type     |
+| `reference/review-checklist.md` | Performing ANY code review of workerd C++ code                          |
+
+When performing a code review, ALWAYS load `reference/review-checklist.md`. When in doubt
+about whether a reference file is relevant, load it — the cost of reading is far less than
+the cost of an incorrect review comment.
+
+---
+
 ### KJ Types over STL
 
-This is the most common review issue. The project uses KJ types instead of the C++ standard library:
+The project uses KJ types instead of the C++ standard library:
 
 | Instead of              | Use                                                 |
 | ----------------------- | --------------------------------------------------- |
@@ -79,6 +105,7 @@ and delete the copy constructor instead.
 - `KJ_FAIL_ASSERT(msg, values...)` — unconditional failure
 - `KJ_SYSCALL(expr, msg, values...)` — wraps C syscalls, checks return values
 - `KJ_UNREACHABLE` — marks unreachable code
+- `kj::throwFatalError(msg, values...)` — throws an exception with a stack trace
 
 These macros automatically capture file/line, stringify operands, and generate stack traces.
 
@@ -108,63 +135,6 @@ their own destructors so that if one throws, the others still run.
 | Macros                        | `CAPITAL_WITH_UNDERSCORES` with project prefix (`KJ_`, `CAPNP_`) |
 | Namespaces                    | `oneword` (keep short); private namespace: `_`                   |
 | Files                         | `module-name.c++`, `module-name.h`, `module-name-test.c++`       |
-
-### Inheritance
-
-- A class is either an **interface** (no data members, only pure virtual methods) or an
-  **implementation** (no non-final virtual methods). Never mix — this causes fragile base class problems.
-- Interfaces should **NOT** declare a destructor.
-- Multiple inheritance is allowed and encouraged (typically inheriting multiple interfaces).
-- Implementation inheritance is acceptable for composition without extra heap allocations.
-
-### Constness and Thread Safety
-
-- Treat constness as **transitive** — a const pointer to a struct means its contained pointers
-  are also effectively const.
-- **`const` methods must be thread-safe** for concurrent calls. Non-const methods require
-  exclusive access. `kj::MutexGuarded<T>` enforces this: `.lockShared()` returns `const T&`,
-  `.lockExclusive()` returns `T&`.
-- Copyable classes with pointer members: declare copy constructor as `T(T& other)` (not
-  `T(const T& other)`) to prevent escalating transitively-const references. Or inherit
-  `kj::DisallowConstCopy`.
-- Only hold locks for the minimum duration necessary to access or modify the guarded data.
-
-#### Correctly holding locks
-
-When using `kj::MutexGuarded<T>`, ensure the lock is correctly held for the duration of any access to
-the guarded data.
-
-For instance, do this:
-
-```cpp
-auto lock = mutexGuarded.lockExclusive();
-KJ_IF_SOME(value, lock->maybeValue) {
-  // Access value safely while lock is held.
-}
-```
-
-Not this:
-
-```cpp
-KJ_IF_SOME(value, mutexGuarded.lockExclusive()->maybeValue) {
-  // Unsafe! The lock is released before we access maybeValue.
-}
-```
-
-### Two Kinds of Types
-
-**Value types** (data):
-
-- Copyable/movable, compared by value, can be serialized
-- No virtual methods; use templates for polymorphism
-- Always have move constructors
-
-**Resource types** (objects with identity):
-
-- Not copyable, not movable — use `kj::Own<T>` on the heap for ownership transfer
-- Use `KJ_DISALLOW_COPY_AND_MOVE` to prevent accidental copying/moving
-- Compared by identity, not value
-- May use inheritance and virtual methods
 
 ### Lambda Capture Rules
 
@@ -214,200 +184,3 @@ Workerd follows these convention over KJ's own comment style:
 - `TODO(now)` comments must be addressed before merging.
 - `TODO({project})` type comments where `{project}` is the name of an active project are acceptable
   for work that is carried out over multiple pull requests.
-
-### Idiomatic KJ API Patterns
-
-**Unwrapping `kj::Maybe`** — always use `KJ_IF_SOME`, never dereference directly:
-
-```cpp
-// Correct:
-KJ_IF_SOME(value, maybeValue) {
-  use(value);  // value is a reference to the contained T
-}
-
-// Correct:
-auto& value = KJ_ASSERT_NONNULL(maybeValue);  // asserts if maybeValue is none, otherwise gives T&
-auto& value = KJ_REQUIRE_NONNULL(maybeValue);  // same but for preconditions
-auto& value = JSG_REQUIRE_NONNULL(maybeValue, ErrorType, "message");  // same but with JavaScript exception type/message
-
-// Wrong
-auto& value = *maybeValue;      // doesn't exist
-auto& value = maybeValue.value(); // not how KJ works
-```
-
-`maybe.map(fn)` and `maybe.orDefault(val)` are useful for simple transforms/fallbacks.
-
-When moving a value out of a `kj::Maybe`, use `kj::mv()` and remember to set the `kj::Maybe` to `kj::none` to avoid dangling references:
-
-```cpp
-KJ_IF_SOME(value, maybeValue) {
-  auto movedValue = kj::mv(value);  // move out of the Maybe
-  maybeValue = kj::none;            // set Maybe to none to avoid dangling reference
-  use(movedValue);
-}
-```
-
-**Unwrapping `kj::OneOf`** — always use `KJ_SWITCH_ONEOF` / `KJ_CASE_ONEOF`:
-
-```cpp
-KJ_SWITCH_ONEOF(variant) {
-  KJ_CASE_ONEOF(s, kj::String) { handleString(s); }
-  KJ_CASE_ONEOF(i, int) { handleInt(i); }
-}
-```
-
-**Building strings** — use `kj::str()`, never `std::to_string` or `+` concatenation:
-
-```cpp
-kj::String msg = kj::str("count: ", count, ", name: ", name);
-```
-
-Use `kj::hex(n)` for hex output. Extend with `KJ_STRINGIFY(MyType)` or a `.toString()` method.
-Use `"literal"_kj` suffix for `kj::StringPtr` literals (can be `constexpr`).
-
-**Scope-exit cleanup** — use `KJ_DEFER` or `kj::defer()`:
-
-```cpp
-KJ_DEFER(close(fd));                          // block scope
-auto cleanup = kj::defer([&]() { close(fd); }); // movable, for non-block lifetimes
-```
-
-Also: `KJ_ON_SCOPE_SUCCESS(...)` and `KJ_ON_SCOPE_FAILURE(...)` for conditional cleanup.
-
-**Syscall error checking** — use `KJ_SYSCALL`, never manual errno checks:
-
-```cpp
-int n;
-KJ_SYSCALL(n = read(fd, buf, size));          // throws on error, retries EINTR
-KJ_SYSCALL_HANDLE_ERRORS(fd = open(path, O_RDONLY)) {
-  case ENOENT: return nullptr;                // handle specific errors
-  default: KJ_FAIL_SYSCALL("open()", error);
-}
-```
-
-**Downcasting** — use `kj::downcast<T>` (debug-checked), not `static_cast` or `dynamic_cast`:
-
-```cpp
-auto& derived = kj::downcast<DerivedType>(baseRef);  // asserts in debug builds
-```
-
-Use `kj::dynamicDowncastIfAvailable<T>` only for optimizations (returns null without RTTI).
-
-**Iteration helpers**:
-
-```cpp
-for (auto i: kj::zeroTo(n)) { ... }        // 0..n-1
-for (auto i: kj::range(a, b)) { ... }      // a..b-1
-for (auto i: kj::indices(array)) { ... }    // 0..array.size()-1
-```
-
-### Promise Patterns
-
-**`.attach()` for lifetime management** — objects must outlive the promise that uses them:
-
-```cpp
-// Correct: stream stays alive until readAllText() completes
-return stream->readAllText().attach(kj::mv(stream));
-
-// Wrong: stream destroyed immediately, promise has dangling reference
-auto promise = stream->readAllText();
-return promise;  // stream is gone
-```
-
-**`.eagerlyEvaluate()` for background tasks** — without it, continuations are lazy
-and may never run:
-
-```cpp
-promise = doWork().then([]() {
-  KJ_LOG(INFO, "done");  // won't run unless someone .wait()s or .then()s
-}).eagerlyEvaluate([](kj::Exception&& e) {
-  KJ_LOG(ERROR, e);      // error handler is required
-});
-```
-
-When using coroutines, `eagerlyEvaluate()` is implied and not needed to be called explicitly.
-
-Use `kj::TaskSet` to manage many background tasks with a shared error handler.
-
-**Cancellation** — destroying a `kj::Promise` cancels it immediately. No continuations
-run, only destructors. Use `.attach(kj::defer(...))` for cleanup that must happen
-on both completion and cancellation.
-
-**`kj::evalNow()`** — wraps synchronous code to catch exceptions as rejected promises:
-
-```cpp
-return kj::evalNow([&]() {
-  // Any throw here becomes a rejected promise, not a synchronous exception
-  return doSomethingThatMightThrow();
-});
-```
-
-### Mutex Patterns
-
-`kj::MutexGuarded<T>` ties locking to access — you can't touch the data without a lock:
-
-```cpp
-// Exclusive access for modification
-{
-  auto lock = guarded.lockExclusive();
-  lock->modify();
-  // lock is released at end of scope
-}
-
-// Multiple readers ok
-{
-  auto shared = guarded.lockShared();
-  shared->read();
-  // shared lock is released at end of scope
-}
-```
-
-`.wait(cond)` on a lock replaces condition variables:
-
-```cpp
-auto lock = guarded.lockExclusive();
-lock.wait([](const T& val) { return val.ready; });  // releases/reacquires automatically
-```
-
-### Other Rules
-
-- **No global constructors**: Don't declare static/global variables with dynamic constructors.
-  Global `constexpr` constants are fine.
-- **No `dynamic_cast` for polymorphism**: Don't use long if/else chains casting to derived types.
-  Extend the base interface instead. `dynamic_cast` is OK for optimizations or diagnostics
-  (test: if it always returned null, would the code still be correct?).
-- **No function/method pointers**: Use templates over functors, or `kj::Function<T>`.
-- **Prefer references over pointers**: Unambiguously non-null.
-
----
-
-### Code Review Checklist
-
-When reviewing workerd C++ code, check for:
-
-1. **STL leaking in**: `std::string`, `std::vector`, `std::optional`, `std::unique_ptr`, etc.
-2. **Raw `new`/`delete`**: Should be `kj::heap<T>()` or similar
-3. **`throw` statements**: Should use `KJ_ASSERT`/`KJ_REQUIRE`/`KJ_FAIL_ASSERT`
-4. **`noexcept` declarations**: Should not be present
-5. **Destructor missing `noexcept(false)`**: Required on all explicit destructors
-6. **`[=]` lambda captures**: Never allowed
-7. **Nullable raw pointers (`T*`)**: Should be `kj::Maybe<T&>`
-8. **Mixed interface/implementation classes**: No data members in interfaces, no non-final virtuals in implementations
-9. **Singletons or mutable globals**: Not allowed
-10. **Missing `.attach()` on promises**: Objects must stay alive for the promise duration
-11. **Background promise without `.eagerlyEvaluate()`**: Lazy continuations may never execute
-12. **Manual errno checks**: Should use `KJ_SYSCALL` / `KJ_SYSCALL_HANDLE_ERRORS`
-13. **`static_cast` for downcasting**: Should be `kj::downcast<T>` (debug-checked)
-14. **`std::to_string` or `+` string concatenation**: Should be `kj::str()`
-15. **`dynamic_cast` for dispatch**: Extend the interface instead
-16. **`/* */` block comments**: Use `//` line comments
-17. **Naming**: TitleCase types, camelCase functions/variables, CAPS constants
-18. **Missing braces**: Required unless entire statement is on one line
-19. **`bool` function parameter**: Prefer `enum class` or `WD_STRONG_BOOL` for clarity at call sites. E.g., `void connect(bool secure)` should be `void connect(SecureMode mode)`.
-20. **Missing `[[nodiscard]]`**: Functions returning error codes, `kj::Maybe`, or success booleans that callers must check should be `[[nodiscard]]`.
-21. **Promise chain where coroutine would be clearer**: Nested `.then()` chains with complex error handling that would be more readable as a coroutine with `co_await`. But avoid suggesting sweeping rewrites.
-22. **Missing `constexpr` / `consteval`**: Compile-time evaluable functions or constants not marked accordingly.
-23. **Reinvented utility**: Custom code duplicating functionality already in `src/workerd/util/` (e.g., custom ring buffer, small set, state machine, weak reference pattern). Check the util directory before suggesting a new abstraction.
-24. **Missing `override`**: Virtual method overrides missing the `override` specifier.
-25. **Direct `new`/`delete` (via `new` expression)**: Should use `kj::heap<T>()`, `kj::heapArray<T>()`, or other KJ memory utilities.
-26. **Explicit `throw` statement**: Should use `KJ_ASSERT`, `KJ_REQUIRE`, `KJ_FAIL_ASSERT`, or `KJ_EXCEPTION` instead of bare `throw`.

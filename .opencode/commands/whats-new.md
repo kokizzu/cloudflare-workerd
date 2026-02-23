@@ -45,21 +45,7 @@ Steps:
    git diff --stat <oldest_commit>^..origin/main
    ```
 
-4. **Categorize each commit** by the files it touches:
-   - **API** — `src/workerd/api/` (excluding `node/`)
-   - **Node.js compat** — `src/workerd/api/node/` or `src/node/`
-   - **I/O** — `src/workerd/io/`
-   - **JSG** — `src/workerd/jsg/`
-   - **Server** — `src/workerd/server/`
-   - **Build** — `build/`, `MODULE.bazel`, `BUILD.bazel`
-   - **Types** — `types/`
-   - **Cloudflare APIs** — `src/cloudflare/`
-   - **Python** — `src/pyodide/`
-   - **Rust** — `src/rust/`
-   - **Docs / Config** — documentation, agent configs, `.md` files
-   - **Tests only** — changes exclusively in test files
-
-   For commits touching multiple areas, list under the primary area.
+4. **Categorize each commit.** You MUST load the `commit-categories` skill before categorizing. Use its path-pattern table to assign each commit to a category based on the files it touches.
 
 5. **Highlight notable changes.** Scan commit messages and diffs for:
    - New compatibility flags (additions to `compatibility-date.capnp`)
@@ -68,6 +54,9 @@ Steps:
    - New APIs or features
    - Security fixes
    - Dependency updates
+   - If current branch is not `main`:
+     - Relevant changes to files touched by the current branch (if any)
+     - Conflicts with the current branch (if any)
 
 6. **Output:**
 
