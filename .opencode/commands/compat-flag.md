@@ -7,8 +7,8 @@ Look up compatibility flag: $ARGUMENTS
 
 **If no argument is provided (empty or blank), list all compatibility flags:**
 
-1. Read `src/workerd/io/compatibility-date.capnp` and find all fields with `$compatEnableFlag`.
-2. For each flag, extract: field name, field number, enable flag string, enable date (or "experimental" / "no date"), and a one-line summary from the comment.
+1. **Use the `compat-date-at` tool** (no arguments) to get the full list of flags with their enable dates, categories, and annotations. This is faster and more accurate than manually reading the capnp file.
+2. For each flag, also extract a one-line summary from the comment in `src/workerd/io/compatibility-date.capnp`.
 3. Output a summary table grouped by category (streams, nodejs, containers, general, etc.):
 
    | Flag        | Enable date | Description       |
@@ -19,9 +19,9 @@ Look up compatibility flag: $ARGUMENTS
 
 **If an argument is provided, look up that specific flag:**
 
-1. **Find the flag definition.** Search `src/workerd/io/compatibility-date.capnp` for the flag name. The argument may be the snake_case flag name (e.g., `text_decoder_replace_surrogates`) or the camelCase field name (e.g., `textDecoderReplaceSurrogates`). Try both forms.
+1. **Use the `compat-date-at` tool** with `flag: "<argument>"` to get the flag's metadata (enable/disable names, enable date, annotations). Then read the capnp source for the comment.
 
-2. **Extract flag metadata** from the capnp definition:
+2. **Extract flag metadata** from the tool output and capnp definition:
    - Field name and number
    - `$compatEnableFlag` name
    - `$compatDisableFlag` name (if present)

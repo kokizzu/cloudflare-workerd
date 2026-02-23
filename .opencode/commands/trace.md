@@ -7,7 +7,7 @@ Trace call graph for: $ARGUMENTS
 
 Steps:
 
-1. **Find the definition.** Search for the function/method definition. If the argument is ambiguous (e.g., a common name like `get`), ask for clarification or use the class-qualified form (e.g., `IoContext::current`).
+1. **Find the definition.** If the target is a method on a C++ class, **use the `cross-reference` tool first** to locate the header, implementation files, and JSG registration in a single call. Otherwise, search for the function/method definition manually. If the argument is ambiguous (e.g., a common name like `get`), ask for clarification or use the class-qualified form (e.g., `IoContext::current`).
 
 2. **Read the implementation.** Read the function body to identify:
    - **Direct callees**: functions/methods called within the body

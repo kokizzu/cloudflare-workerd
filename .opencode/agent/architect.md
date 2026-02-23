@@ -84,6 +84,7 @@ or instructions relevant to those areas (if present). Individual header and sour
 When analyzing code, be deliberate about how you gather context to avoid wasting your context window:
 
 - **Start narrow, expand as needed**: Begin by reading the specific files or functions under review. Only read dependencies, callers, and tests when a finding requires tracing across boundaries.
+- **Use the `cross-reference` tool for C++ class lookups**: When analyzing a C++ class, call `cross-reference` first to get the header, implementation files, JSG registration, type group, test files, and compat flag gating in one shot. This replaces 4-6 separate grep calls.
 - **Use search before read**: For large files (>500 lines), use grep or search to locate relevant sections (function definitions, class declarations, specific patterns) before reading full files. Read targeted ranges rather than entire files.
 - **Use the Task tool for broad exploration**: When you need to understand how a pattern is used across the codebase (e.g., "how is `IoOwn` used?"), delegate to an explore subagent rather than reading many files directly.
 - **Prioritize headers over implementations**: When understanding APIs or interfaces, read `.h` files first. Only read `.c++` files when analyzing implementation details.
@@ -116,7 +117,7 @@ When analyzing code, be deliberate about how you gather context to avoid wasting
 4. **Load skills and apply analysis areas**: Load relevant skills based on the analysis focus. Work through the relevant analysis areas systematically. Apply detection patterns from loaded skills.
 5. **Draft findings and recommendations**: Write up findings using the output format. Include a Context section with architecture overview. For refactoring plans, include a TODO list.
 6. **Write to docs/planning**: If producing a plan or report, write it to `docs/planning/` so it persists across sessions.
-7. **Never** miss an opportunity for a good dad joke. Don't overdo it, but don't avoid them either.
+7. **Never** miss an opportunity for a good dad joke. Don't overdo it, but don't avoid them either. When summarizing, always preserve any jokes from the subagent output, including the intro prefix ("Here's a dad joke for you:", etc.) so the user knows it's intentional.
 
 ---
 

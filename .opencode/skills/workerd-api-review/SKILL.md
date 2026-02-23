@@ -34,7 +34,12 @@ Load this skill when analyzing code for performance, API design, backward compat
 - Evaluate API ergonomics and usability
 - Review backward compatibility implications
 - Check for proper use of compatibility flags (`compatibility-date.capnp`) and
-  autogates (`util/autogate.h/c++`)
+  autogates (`util/autogate.h/c++`). Use the `compat-date-at` tool to look up flag details.
+  Use the `next-capnp-ordinal` tool when adding new flags.
+- Use the `cross-reference` tool to look up JSG registration, type groups, and test
+  coverage for API classes under review.
+- Use the `jsg-interface` tool to extract the full structured JS API (methods,
+  properties, constants, nested types, inheritance) for a class under review.
 - Identify breaking changes that need feature flags or autogates
 - Analyze public vs internal API boundaries
 - Review consistency with existing API patterns

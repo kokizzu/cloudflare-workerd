@@ -50,7 +50,7 @@ Key rules:
 - The const name (e.g., `unitTests`) must match what the test runner expects
 - `modules` uses `embed` to inline file contents at build time
 - The first module should be named `"worker"` — this is the entry point
-- `compatibilityFlags` control which APIs are available
+- `compatibilityFlags` control which APIs are available. Use the `compat-date-at` tool to look up available flags and their enable dates.
 - `compatibilityDate` should not be used in wd-test; use specific flags instead
 
 ### Module Types

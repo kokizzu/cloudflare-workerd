@@ -39,9 +39,9 @@ The argument can be:
 
 Find three things:
 
-1. **The crash site source.** Read the assertion/crash line and its immediate context (~50 lines). Understand what invariant was violated and what state would cause it.
+1. **The crash site source.** Read the assertion/crash line and its immediate context (~50 lines). Understand what invariant was violated and what state would cause it. If the crash is in a C++ class method, **use the `cross-reference` tool** to quickly locate the header, implementation files, JSG registration, and test files for that class.
 
-2. **The test file.** Use `/find-test` on the source file containing the crash site. If no test exists, identify the nearest test file in the same directory.
+2. **The test file.** Use `/find-test` on the source file containing the crash site (the cross-reference output may already list relevant test files). If no test exists, identify the nearest test file in the same directory.
 
 3. **Existing feature tests.** Search for existing tests that exercise the _feature_ involved in the bug — not just tests near the crash site file. The crash may be in `pipeline.c++` but the relevant working test may be an integration test in a completely different directory. These existing tests encode setup, verification, and framework patterns you need. They are your starting template.
 
@@ -106,11 +106,10 @@ When the mechanism is confirmed, output:
 
 ## Rules
 
-- **Work in parallel whenever possible.** Don't wait for the build to finish before reading code that would inform the next test iteration. Use the build time to maximize your learning and progress. Investigate multiple
-hypotheses in parallel if you can, but do not let this delay writing and running tests.
+- **Work in parallel whenever possible.** Don't wait for the build to finish before reading code that would inform the next test iteration. Use the build time to maximize your learning and progress. Investigate multiple hypotheses in parallel if you can, but do not let this delay writing and running tests.
 - **Do not spend more than 15 minutes reading code before the first test is written and building.** If you hit 15 minutes, write whatever test you can with your current understanding.
 - **Do not re-read the same function more than twice.** If you catch yourself doing this, write a test immediately.
 - **Do not try to trace the full call stack before writing a test.** The test will tell you if your understanding is correct.
 - **Every hypothesis must be tested, not just reasoned about.**
 - **Update the tracking document with each iteration.** If a tracking document is being used, update the hypotheses, code read, and test results sections so you have a clear record of your investigation process. Particularly after compaction, if the tracking document is outdated, update it before coninuing to the next step.
-- **Never** miss an opportunity for a good dad joke. Don't overdo it, but don't avoid them either.
+- **Never** miss an opportunity for a good dad joke (using the `dad-jokes` skill). Don't overdo it, but don't avoid them either. When summarizing, **always** preserve any jokes from the subagent output, and **always** including the intro prefix ("Here's a dad joke for you:", etc.) so the user knows it's intentional.

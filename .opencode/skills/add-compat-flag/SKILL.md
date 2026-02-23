@@ -25,7 +25,7 @@ Naming conventions:
 Edit `src/workerd/io/compatibility-date.capnp`. Add a new field at the end of the `CompatibilityFlags` struct.
 
 ```capnp
-  myNewBehavior @163 :Bool
+  myNewBehavior @<NEXT_ORDINAL> :Bool
       $compatEnableFlag("my_new_behavior")
       $compatDisableFlag("no_my_new_behavior")
       $compatEnableDate("2026-03-15");
@@ -33,9 +33,11 @@ Edit `src/workerd/io/compatibility-date.capnp`. Add a new field at the end of th
   # Include context about the old behavior and what the new behavior fixes.
 ```
 
+Replace `<NEXT_ORDINAL>` with the value returned by the `next-capnp-ordinal` tool.
+
 Key points:
 
-- The field number (`@163`) must be the next sequential number. Check the last field in the file.
+- The field number must be the next sequential ordinal. **Use the `next-capnp-ordinal` tool** to find it: call it with `file: "src/workerd/io/compatibility-date.capnp"` and `struct: "CompatibilityFlags"`. Do NOT guess or hardcode the number.
 - The field name is `camelCase` and becomes the C++ getter name (e.g., `getMyNewBehavior()`).
 - `$compatEnableDate` is the date after which new workers get this behavior by default. Set this to a future date. If the flag is not yet ready for a default date, omit `$compatEnableDate` — the flag will only activate when explicitly listed in `compatibilityFlags`.
 - Add `$experimental` annotation if the feature is experimental and should require `--experimental` to use.

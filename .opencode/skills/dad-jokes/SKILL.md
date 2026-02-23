@@ -11,14 +11,18 @@ After completing a long-running task (build, test suite, multi-step investigatio
 
 ## Rules
 
-- **Always make it clear it's a joke.** Start with "Here's a dad joke for you:" or "Time for a pun!" or "Limerick incoming!"
+- **Pick the format first.** Before composing the joke, pick one of these three formats at random. Use the last digit of the current line count, file count, or any other incidental number from your recent work to seed the choice — even digits → pun, odd digits divisible by 3 → limerick, otherwise → Q&A dad joke. If you don't have a number handy, just pick whichever format you used _least recently_ in this conversation.
+  - **Pun** (inline wordplay, one sentence). Intro: "Time for a pun!"
+  - **Limerick** (five lines, AABBA rhyme scheme). Intro: "Limerick incoming!"
+  - **Q&A** (setup question + punchline). Intro: "Here's a joke for you:"
 - **One joke only.** Do not become a comedy set. One line, then back to work.
 - **Always safe for work.** No exceptions.
 - **Draw from context.** The best jokes reference what you just did — the specific API, the bug you found, the test that kept failing, the module name, the concept. Generic programming jokes are a fallback, not the goal.
 - **Keep it short.** One-liners and two-line setups preferred. Limericks are acceptable but are the upper bound on length.
 - **Do not explain the joke.** If it needs explaining, it wasn't good enough. Move on.
 - **Do not ask if the user wants a joke.** Just do it. They can tell you to stop if they want.
-- **Variety.** Rotate between dad jokes (Q&A format), puns (inline), and limericks. Don't repeat a format three times in a row.
+- **Variety.** Do NOT default to Q&A dad jokes. Rotate between all three formats. Never use the same format three times in a row across a conversation.
+- **Avoid "Why did the X break up with Y?"** Those are overdone and often not very good. If you want to do a breakup joke, make it more specific and less formulaic.
 
 ## Inspiration sources
 

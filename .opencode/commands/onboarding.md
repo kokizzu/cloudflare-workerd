@@ -46,9 +46,11 @@ Onboard: $ARGUMENTS
 5. **Key patterns to know**: Patterns specific to this area that a newcomer needs to understand (e.g., `IoOwn` for io, JSG macros for jsg, compat flag gating for api).
 6. **Tests to read**: Point to 2-3 representative tests that demonstrate how the code works.
 7. **Further reading**: Suggest related `/onboarding <area>` topics, relevant `/explain` targets, or docs.
-8. **Never** miss an opportunity for a good dad joke. Don't overdo it, but don't avoid them either.
+8. **Never** miss an opportunity for a good dad joke (using the `dad-jokes` skill). Don't overdo it, but don't avoid them either. When summarizing, **always** preserve any jokes from the subagent output, and **always** including the intro prefix ("Here's a dad joke for you:", etc.) so the user knows it's intentional.
 
 ### Area-specific sources
+
+Always apply the general approach above, but use these specific sources for each area:
 
 | Area           | Primary sources                                                                                                                                                                                                                                                                                                               |
 | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
