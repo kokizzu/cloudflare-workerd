@@ -35,7 +35,7 @@ const unitTests :Workerd.Config = (
           ( name = "QUEUE", queue = "queue-error-codes-disabled" ),
           ( name = "ERROR_CODES_FLAG", json = "false" ),
         ],
-        compatibilityFlags = ["nodejs_compat", "service_binding_extra_handlers", "queues_json_messages", "rpc", "capture_async_api_throws", "disable_fast_jsg_struct"],
+        compatibilityFlags = ["nodejs_compat", "service_binding_extra_handlers", "queues_json_messages", "no_queue_expose_error_codes", "rpc", "capture_async_api_throws", "disable_fast_jsg_struct"],
       )
     ),
   ],
