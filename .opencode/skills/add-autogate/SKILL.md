@@ -15,7 +15,7 @@ Autogates enable gradual rollout of risky code changes independent of binary rel
 | You need a kill switch during rollout         | The change is tied to a compatibility date |
 | The gate will be removed once stable          | Users need to opt in or out explicitly     |
 
-Autogates and compat flags are separate mechanisms — an autogate does not become a compat flag. If a change needs to be user-visible and date-gated, it should be a compat flag from the start. A change can be guarded by _both_ an autogate (for safe internal rollout) and a compat flag (for user-facing control) simultaneously.
+Autogates and compat flags are separate mechanisms — an autogate does not become a compat flag.
 
 ### Step 1: Add the enum value
 
@@ -49,7 +49,7 @@ kj::StringPtr KJ_STRINGIFY(AutogateKey key) {
 }
 ```
 
-Naming convention: `kebab-case` for the string name. This string is what appears in runtime configuration (prefixed with `workerd-autogate-`).
+Naming convention: `kebab-case` for the string name. This string is what appears in runtime configuration (prefixed with `workerd-autogate-`). The enum name and string name should match to avoid confusion.
 
 ### Step 3: Guard your code
 
@@ -106,7 +106,7 @@ just stream-test //path/to:my-test@all-autogates   # New behavior (gate on)
 
 ### Step 6: Remove the gate (after rollout)
 
-Once the feature is stable and fully rolled out:
+Once the human user explicitly confirms that the feature is stable and fully rolled out:
 
 1. Remove the `AutogateKey` enum value from `autogate.h`
 2. Remove the `case` from `KJ_STRINGIFY` in `autogate.c++`
