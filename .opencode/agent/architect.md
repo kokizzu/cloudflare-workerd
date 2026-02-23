@@ -202,6 +202,7 @@ For detailed C++ style conventions (naming, types, ownership, error handling, fo
   - excessive use of inheritance when composition would be better, etc.
 - Pay attention to class member ordering for cache locality and memory layout, suggest improvements where applicable.
 - Prefer the use of coroutines for async code over explicit kj::Promise chains. Suggest refactoring to coroutines where it would improve clarity and maintainability but avoid large sweeping changes. Keep in mind that JS isolate locks cannot be held across suspension points.
+- When a change sets a default enable date for a compatibility flag, the date must be at least 2-3 weeks in the future to allow for testing and rollout. If you see a default enable date that is too soon, flag it as an issue.
 
 ---
 
