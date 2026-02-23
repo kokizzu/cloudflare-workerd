@@ -5480,7 +5480,7 @@ export declare abstract class Ai<AiModelList extends AiModelListType = AiModels>
    * });
    * ```
    */
-  aiSearch: AiSearchAccountService;
+  aiSearch(): AiSearchAccountService;
 
   /**
    * @deprecated AutoRAG has been replaced by AI Search.
