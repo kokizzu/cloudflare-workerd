@@ -1896,6 +1896,7 @@ class Server::WorkerService final: public Service,
       LinkCallback linkCallback,
       AbortActorsCallback abortActorsCallback,
       kj::Maybe<kj::String> dockerPathParam,
+      kj::Maybe<kj::String> containerEgressInterceptorImageParam,
       bool isDynamic)
       : channelTokenHandler(channelTokenHandler),
         serviceName(serviceName),
@@ -1909,6 +1910,7 @@ class Server::WorkerService final: public Service,
         waitUntilTasks(*this),
         abortActorsCallback(kj::mv(abortActorsCallback)),
         dockerPath(kj::mv(dockerPathParam)),
+        containerEgressInterceptorImage(kj::mv(containerEgressInterceptorImageParam)),
         isDynamic(isDynamic) {}
 
   // Call immediately after the constructor to set up `actorNamespaces`. This can't happen during
@@ -1929,9 +1931,9 @@ class Server::WorkerService final: public Service,
       }
 
       auto actorClass = kj::refcounted<ActorClassImpl>(*this, entry.key, Frankenvalue());
-      auto ns =
-          kj::heap<ActorNamespace>(kj::mv(actorClass), entry.value, threadContext.getUnsafeTimer(),
-              threadContext.getByteStreamFactory(), network, dockerPath, waitUntilTasks);
+      auto ns = kj::heap<ActorNamespace>(kj::mv(actorClass), entry.value,
+          threadContext.getUnsafeTimer(), threadContext.getByteStreamFactory(), channelTokenHandler,
+          network, dockerPath, containerEgressInterceptorImage, waitUntilTasks);
       actorNamespaces.insert(entry.key, kj::mv(ns));
     }
   }
@@ -2195,15 +2197,19 @@ class Server::WorkerService final: public Service,
         const ActorConfig& config,
         kj::Timer& timer,
         capnp::ByteStreamFactory& byteStreamFactory,
+        ChannelTokenHandler& channelTokenHandler,
         kj::Network& dockerNetwork,
         kj::Maybe<kj::StringPtr> dockerPath,
+        kj::Maybe<kj::StringPtr> containerEgressInterceptorImage,
         kj::TaskSet& waitUntilTasks)
         : actorClass(kj::mv(actorClass)),
           config(config),
           timer(timer),
           byteStreamFactory(byteStreamFactory),
+          channelTokenHandler(channelTokenHandler),
           dockerNetwork(dockerNetwork),
           dockerPath(dockerPath),
+          containerEgressInterceptorImage(containerEgressInterceptorImage),
           waitUntilTasks(waitUntilTasks) {}
 
     // Called at link time to provide needed resources.
@@ -2855,8 +2861,9 @@ class Server::WorkerService final: public Service,
       };
 
       auto client = kj::refcounted<ContainerClient>(byteStreamFactory, timer, dockerNetwork,
-          kj::str(dockerPathRef), kj::str(containerId), kj::str(imageName), waitUntilTasks,
-          kj::mv(cleanupCallback));
+          kj::str(dockerPathRef), kj::str(containerId), kj::str(imageName),
+          containerEgressInterceptorImage.map([](kj::StringPtr s) { return kj::str(s); }),
+          waitUntilTasks, kj::mv(cleanupCallback), channelTokenHandler);
 
       // Store raw pointer in map (does not own)
       containerClients.insert(kj::str(containerId), client.get());
@@ -2901,8 +2908,10 @@ class Server::WorkerService final: public Service,
     kj::Maybe<kj::Promise<void>> cleanupTask;
     kj::Timer& timer;
     capnp::ByteStreamFactory& byteStreamFactory;
+    ChannelTokenHandler& channelTokenHandler;
     kj::Network& dockerNetwork;
     kj::Maybe<kj::StringPtr> dockerPath;
+    kj::Maybe<kj::StringPtr> containerEgressInterceptorImage;
     kj::TaskSet& waitUntilTasks;
     kj::Maybe<AlarmScheduler&> alarmScheduler;
 
@@ -3141,6 +3150,7 @@ class Server::WorkerService final: public Service,
   kj::TaskSet waitUntilTasks;
   AbortActorsCallback abortActorsCallback;
   kj::Maybe<kj::String> dockerPath;
+  kj::Maybe<kj::String> containerEgressInterceptorImage;
   bool isDynamic;
 
   class ActorChannelImpl final: public IoChannelFactory::ActorChannel {
@@ -4721,23 +4731,30 @@ kj::Promise<kj::Own<Server::WorkerService>> Server::makeWorkerImpl(kj::StringPtr
   };
 
   kj::Maybe<kj::String> dockerPath = kj::none;
+  kj::Maybe<kj::String> containerEgressInterceptorImage = kj::none;
   switch (def.containerEngineConf.which()) {
     case config::Worker::ContainerEngine::NONE:
       // No container engine configured
       break;
-    case config::Worker::ContainerEngine::LOCAL_DOCKER:
-      dockerPath = kj::str(def.containerEngineConf.getLocalDocker().getSocketPath());
+    case config::Worker::ContainerEngine::LOCAL_DOCKER: {
+      auto dockerConf = def.containerEngineConf.getLocalDocker();
+      dockerPath = kj::str(dockerConf.getSocketPath());
+      if (dockerConf.hasContainerEgressInterceptorImage()) {
+        containerEgressInterceptorImage = kj::str(dockerConf.getContainerEgressInterceptorImage());
+      }
       break;
+    }
   }
 
   kj::Maybe<kj::StringPtr> serviceName;
   if (!def.isDynamic) serviceName = name;
 
-  auto result = kj::refcounted<WorkerService>(channelTokenHandler, serviceName,
-      globalContext->threadContext, monotonicClock, kj::mv(worker),
-      kj::mv(errorReporter.defaultEntrypoint), kj::mv(errorReporter.namedEntrypoints),
-      kj::mv(errorReporter.actorClasses), kj::mv(linkCallback),
-      KJ_BIND_METHOD(*this, abortAllActors), kj::mv(dockerPath), def.isDynamic);
+  auto result =
+      kj::refcounted<WorkerService>(channelTokenHandler, serviceName, globalContext->threadContext,
+          monotonicClock, kj::mv(worker), kj::mv(errorReporter.defaultEntrypoint),
+          kj::mv(errorReporter.namedEntrypoints), kj::mv(errorReporter.actorClasses),
+          kj::mv(linkCallback), KJ_BIND_METHOD(*this, abortAllActors), kj::mv(dockerPath),
+          kj::mv(containerEgressInterceptorImage), def.isDynamic);
   result->initActorNamespaces(def.localActorConfigs, network);
   co_return result;
 }
@@ -4929,14 +4946,17 @@ class Server::WorkerdBootstrapImpl final: public rpc::WorkerdBootstrap::Server {
         httpOverCapnpFactory(httpOverCapnpFactory) {}
 
   kj::Promise<void> startEvent(StartEventContext context) override {
-    // TODO(someday): Use cfBlobJson from the connection if there is one, or from RPC params
-    //   if we add that? (Note that if a connection-level cf blob exists, it should take
-    //   priority; we should only accept a cf blob from the client if we have a cfBlobHeader
-    //   configured, which hints that this service trusts the client to provide the cf blob.)
-
+    // Extract the optional cf blob from the RPC params and pass it along with the
+    // service channel to EventDispatcherImpl. The cf blob will be included in
+    // SubrequestMetadata when creating the WorkerInterface for HTTP events.
+    kj::Maybe<kj::String> cfBlobJson;
+    auto params = context.getParams();
+    if (params.hasCfBlobJson()) {
+      cfBlobJson = kj::str(params.getCfBlobJson());
+    }
     context.initResults(capnp::MessageSize{4, 1})
-        .setDispatcher(
-            kj::heap<EventDispatcherImpl>(httpOverCapnpFactory, service->startRequest({})));
+        .setDispatcher(kj::heap<EventDispatcherImpl>(
+            httpOverCapnpFactory, kj::addRef(*service), kj::mv(cfBlobJson)));
     return kj::READY_NOW;
   }
 
@@ -4946,14 +4966,22 @@ class Server::WorkerdBootstrapImpl final: public rpc::WorkerdBootstrap::Server {
 
   class EventDispatcherImpl final: public rpc::EventDispatcher::Server {
    public:
-    EventDispatcherImpl(
-        capnp::HttpOverCapnpFactory& httpOverCapnpFactory, kj::Own<WorkerInterface> worker)
+    EventDispatcherImpl(capnp::HttpOverCapnpFactory& httpOverCapnpFactory,
+        kj::Own<IoChannelFactory::SubrequestChannel> service,
+        kj::Maybe<kj::String> cfBlobJson)
         : httpOverCapnpFactory(httpOverCapnpFactory),
-          worker(kj::mv(worker)) {}
+          service(kj::mv(service)),
+          cfBlobJson(kj::mv(cfBlobJson)) {}
 
     kj::Promise<void> getHttpService(GetHttpServiceContext context) override {
+      // Create WorkerInterface with cf blob metadata (if provided via startEvent).
+      IoChannelFactory::SubrequestMetadata metadata;
+      KJ_IF_SOME(cf, cfBlobJson) {
+        metadata.cfBlobJson = kj::str(cf);
+      }
+      auto worker = getService()->startRequest(kj::mv(metadata));
       context.initResults(capnp::MessageSize{4, 1})
-          .setHttp(httpOverCapnpFactory.kjToCapnp(getWorker()));
+          .setHttp(httpOverCapnpFactory.kjToCapnp(kj::mv(worker)));
       return kj::READY_NOW;
     }
 
@@ -5013,13 +5041,20 @@ class Server::WorkerdBootstrapImpl final: public rpc::WorkerdBootstrap::Server {
 
    private:
     capnp::HttpOverCapnpFactory& httpOverCapnpFactory;
-    kj::Maybe<kj::Own<WorkerInterface>> worker;
+    kj::Maybe<kj::Own<IoChannelFactory::SubrequestChannel>> service;
+    kj::Maybe<kj::String> cfBlobJson;
+
+    kj::Own<IoChannelFactory::SubrequestChannel> getService() {
+      auto result =
+          kj::mv(KJ_ASSERT_NONNULL(service, "EventDispatcher can only be used for one request"));
+      service = kj::none;
+      return result;
+    }
 
     kj::Own<WorkerInterface> getWorker() {
-      auto result =
-          kj::mv(KJ_ASSERT_NONNULL(worker, "EventDispatcher can only be used for one request"));
-      worker = kj::none;
-      return result;
+      // For non-HTTP events (RPC, traces, etc.), create WorkerInterface with
+      // empty metadata since there's no HTTP request to extract cf from.
+      return getService()->startRequest({});
     }
 
     [[noreturn]] void throwUnsupported() {
