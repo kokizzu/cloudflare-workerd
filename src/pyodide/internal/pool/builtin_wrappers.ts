@@ -1,6 +1,7 @@
 import type { getRandomValues as getRandomValuesType } from 'pyodide-internal:topLevelEntropy/lib';
 import type { default as UnsafeEvalType } from 'internal:unsafe-eval';
 import { PythonWorkersInternalError } from 'pyodide-internal:util';
+import { PyodideVersion } from 'pyodide-internal:const';
 
 if (typeof FinalizationRegistry === 'undefined') {
   // @ts-expect-error cannot assign to globalThis
@@ -38,7 +39,7 @@ export function setSetTimeout(
 }
 
 export function reportUndefinedSymbolsPatched(Module: Module): void {
-  if (Module.API.version === '0.26.0a2') {
+  if (Module.API.version === PyodideVersion.V0_26_0a2) {
     return;
   }
   Module.reportUndefinedSymbols();
@@ -58,7 +59,7 @@ function dynlibLookup026Helper(
 
 function dynlibLookup026(Module: Module, libName: string): string {
   // This function is for 0.26.0a2 only. In newer versions, we set LD_LIBRARY_PATH instead.
-  if (Module.API.version !== '0.26.0a2') {
+  if (Module.API.version !== PyodideVersion.V0_26_0a2) {
     throw new PythonWorkersInternalError('Should not happen');
   }
   // Most libraries are loaded from /usr/lib. For scipy and similar libraries that depend on
@@ -83,7 +84,7 @@ export function patchedLoadLibData(
   rpath: any
 ): WebAssembly.Module {
   if (!path.startsWith('/')) {
-    if (Module.API.version === '0.26.0a2') {
+    if (Module.API.version === PyodideVersion.V0_26_0a2) {
       path = dynlibLookup026(Module, path);
     } else {
       path = Module.findLibraryFS(path, rpath);
