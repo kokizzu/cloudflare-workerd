@@ -124,3 +124,10 @@ When reviewing Rust code in workerd, check for each of these items.
    for `String` where `&str` works, or `Vec<T>` where a slice would do.
 10. **`#[allow(...)]` where `#[expect(...)]` would work**: Prefer `expect` to prevent stale
     suppressions.
+11. **Copyright header on new files**: Every new `.rs` file must begin with the project copyright/license header using the current year. Expected format:
+    ```
+    // Copyright (c) <current-year> Cloudflare, Inc.
+    // Licensed under the Apache 2.0 license found in the LICENSE file or at:
+    //     https://opensource.org/licenses/Apache-2.0
+    ```
+    Flag any new file that uses a stale year (e.g., `2017-2022` in a file created in 2026) or omits the header entirely.
