@@ -30,3 +30,4 @@ When reviewing workerd C++ code, check for each of these items.
 24. **Missing `override`**: Virtual method overrides missing the `override` specifier.
 25. **Direct `new`/`delete` (via `new` expression)**: Should use `kj::heap<T>()`, `kj::heapArray<T>()`, or other KJ memory utilities.
 26. **Explicit `throw` statement**: Should use `KJ_ASSERT`, `KJ_REQUIRE`, `KJ_FAIL_ASSERT`, or `KJ_EXCEPTION` instead of bare `throw`.
+27. **Magic numbers**: Numeric literals without explanation or named constants.

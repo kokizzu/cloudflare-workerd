@@ -41,6 +41,14 @@ Load this skill when analyzing code for performance, API design, backward compat
 - Use the `jsg-interface` tool to extract the full structured JS API (methods,
   properties, constants, nested types, inheritance) for a class under review.
 - Identify breaking changes that need feature flags or autogates
+- **Error type changes are generally not breaking.** Changing the type of error thrown (e.g., from a
+  generic `kj::Exception` to a JS `TypeError`, or between JS error types) is not normally considered
+  a breaking change because well-written user code should not depend on specific error types. The
+  exception is when the change removes properties that code could reasonably depend on — for
+  instance, changing from a `DOMException` to a `TypeError` is breaking because `DOMException` has
+  properties like `code` and `name` with specific values that `TypeError` does not. Use judgment:
+  if the error type change could plausibly break real user code in a substantial way, treat it as
+  breaking and gate it behind a compat flag.
 - Analyze public vs internal API boundaries
 - Review consistency with existing API patterns
 
