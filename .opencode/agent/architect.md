@@ -106,12 +106,13 @@ When analyzing code, be deliberate about how you gather context to avoid wasting
    - For **focused reviews**: load only the skills relevant to the focus area (see Analysis Modes below).
    - Always load `kj-style` when reviewing C++ code.
    - When the diff contains `.rs` files under `src/rust/`, also load `rust-review`. For changes that span both C++ and Rust (e.g., CXX bridge changes with companion `ffi.c++`/`ffi.h` files), load both `kj-style` and `rust-review`.
-6. **Check for dependency changes**: Scan the diff for changes to dependency-related files (`MODULE.bazel`, `build/deps/`, `deps/rust/crates/`, `patches/`, `package.json`). If dependency changes are detected:
-   - Identify each changed dependency (name, version change, added/removed/patched)
-   - Use the `bazel-deps` tool with `direction: "rdeps"` to map impacted code for each changed dependency. Use ecosystem qualifiers when needed (e.g., `rust:base64` for Rust crates, `cpp:base64` for C++ targets).
-   - Assess blast radius and risk level. Pay special attention to patch file changes under `patches/` — these represent custom modifications to upstream code.
-   - Include a **Dependency Impact** section in your findings with impacted components and recommended review focus areas.
-7. **Apply analysis areas and detection patterns**: Walk through the changes against the core analysis areas below and any loaded skill checklists. Focus on what's most relevant to the change.
+6. **Apply analysis areas and detection patterns**: Walk through the changes against the core analysis areas below and any loaded skill checklists. Focus on what's most relevant to the change. Perform step 7 in parallel as you review the code.
+7. **Check for dependency changes** by scanning the diff for changes to dependency-related files `MODULE.bazel`, `build/deps/`, `deps/rust/crates/`, `patches/`, `package.json`, `Cargo.lock`, `cargo.bzl`, `crates/defs.bzl`, `crates/BAZEL.build`, etc.
+   - If there are no dependency changes, skip this step.
+   - Identify each changed dependency (name, version change)
+   - Identify if it is a new, updated, or removed dependency.
+   - For each updated dependency, use the `bazel-deps` tool with `direction: "rdeps"` to map the impacted code.
+   - Include a **Dependencies** section in your findings with impacted components and recommended review focus areas.
 8. **Formulate findings**: Write up findings using the output format. Prioritize CRITICAL/HIGH issues. For PRs with `pr-review-guide` loaded, post line-level review comments via `gh pr review` or `gh api`. When the fix is obvious and localized, include a suggested edit block.
 9. **Summarize**: Provide a summary with prioritized recommendations.
 
