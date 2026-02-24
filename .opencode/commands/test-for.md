@@ -11,14 +11,14 @@ Steps:
 
 2. **Extract key symbols.** Read the source file (header preferred) and identify the main exported symbols: class names, public method names, free function names, macros. These are what we'll search for in tests.
 
-3. **Find test targets.** Look in the `BUILD.bazel` file in the same directory and in a `tests/` subdirectory for `wd_test()` and `kj_test()` rules. Also check if the source file is a dependency of test targets:
+3. **Find test targets.** Look in the `BUILD.bazel` file in the same directory and in a `tests/` subdirectory for `wd_test()` and `kj_test()` rules. For Rust files (`.rs` under `src/rust/`), also check for `wd_rust_crate()` rules which auto-generate `<name>_test` targets, and companion C++ test files (e.g., `ffi-test.c++`) that test the FFI bridge. Also check if the source file is a dependency of test targets:
 
    ```
    bazel query 'rdeps(//src/..., <source_target>, 1)' --output label 2>/dev/null | grep -i test
    ```
 
 4. **Find test cases that reference the code.** For each test file found, grep for the key symbols from step 2. Read the surrounding context to understand what each test case exercises. Tests for some C++
-code may be in JavaScript test files if the C++ code is exposed to JS, so check those as well.
+   code may be in JavaScript test files if the C++ code is exposed to JS, so check those as well. For Rust code, also search `.rs` test files (including inline `#[cfg(test)]` modules and files under `tests/` subdirectories) and the `jsg-test` harness tests.
 
 5. **Assess coverage.** Compare the public API surface (from step 2) against what the tests exercise (from step 4). Identify:
    - Well-tested: symbols referenced in multiple test cases

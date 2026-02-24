@@ -129,6 +129,7 @@ Run appropriate verification:
 - `just build` - Verify the build succeeds
 - `just test` or targeted tests - Verify tests pass
 - `just clang-tidy <target>` - For C++ changes, check for issues
+- `just clippy <crate>` - For Rust changes (files under `src/rust/`), run clippy on each affected crate
 
 ### 4. Commit Message Guidance
 
