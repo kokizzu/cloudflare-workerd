@@ -303,7 +303,6 @@ kj::Maybe<IcuDecoder> IcuDecoder::create(Encoding encoding, bool fatal, bool ign
 kj::Maybe<jsg::JsString> IcuDecoder::decode(
     jsg::Lock& js, kj::ArrayPtr<const kj::byte> buffer, bool flush) {
   UErrorCode status = U_ZERO_ERROR;
-  kj::Maybe<kj::Array<kj::byte>> merged;
   const auto maxCharSize = [this]() { return ucnv_getMaxCharSize(inner.get()); };
 
   const auto isUnicode = [this]() {
@@ -485,17 +484,9 @@ jsg::JsString TextDecoder::decode(jsg::Lock& js,
     jsg::Optional<kj::Array<const kj::byte>> maybeInput,
     jsg::Optional<DecodeOptions> maybeOptions) {
   auto options = maybeOptions.orDefault(DEFAULT_OPTIONS);
-  // Per spec, omitting input is end-of-queue, so we must flush pending bytes.
-  const auto flush = maybeInput == kj::none || !options.stream;
   auto& input = maybeInput.orDefault(EMPTY);
-  auto result =
-      JSG_REQUIRE_NONNULL(getImpl().decode(js, input, flush), TypeError, "Failed to decode input.");
-  // Per WHATWG spec, when flush is set the decoder is reset to a new instance
-  // so subsequent calls start with clean state.
-  if (flush) {
-    getImpl().reset();
-  }
-  return kj::mv(result);
+  return JSG_REQUIRE_NONNULL(
+      getImpl().decode(js, input, !options.stream), TypeError, "Failed to decode input.");
 }
 
 kj::Maybe<jsg::JsString> TextDecoder::decodePtr(

@@ -53,8 +53,16 @@ void LegacyDecoder::reset() {
 
 kj::Maybe<jsg::JsString> LegacyDecoder::decode(
     jsg::Lock& js, kj::ArrayPtr<const kj::byte> buffer, bool flush) {
-  auto result = ::workerd::rust::encoding::decode(
-      *state, buffer.as<kj_rs::RustMutable>(), flush, fatal.toBool());
+  // Reset decoder state after flush, matching IcuDecoder's KJ_DEFER contract.
+  // This ensures decodePtr() (used by TextDecoderStream) resets correctly on flush.
+  KJ_DEFER({
+    if (flush) reset();
+  });
+
+  ::workerd::rust::encoding::DecodeOptions options{.flush = flush, .fatal = fatal.toBool()};
+  // kj_rs::RustMutable is used to avoid a copy of the underlying buffer.
+  auto result =
+      ::workerd::rust::encoding::decode(*state, buffer.as<kj_rs::RustMutable>(), kj::mv(options));
 
   if (fatal.toBool() && result.had_error) {
     // Decoder state already reset by the Rust side on fatal error.

@@ -1,4 +1,4 @@
-// Copyright (c) 2017-2022 Cloudflare, Inc.
+// Copyright (c) 2026 Cloudflare, Inc.
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
@@ -36,6 +36,11 @@ mod ffi {
         had_error: bool,
     }
 
+    struct DecodeOptions {
+        flush: bool,
+        fatal: bool,
+    }
+
     extern "Rust" {
         type Decoder;
 
@@ -47,7 +52,7 @@ mod ffi {
         /// Decode a chunk of bytes. Set `flush` to true on the final chunk.
         /// When `fatal` is true and an error is encountered, `had_error` is
         /// set and the output may be incomplete.
-        fn decode(decoder: &mut Decoder, input: &[u8], flush: bool, fatal: bool) -> DecodeResult;
+        fn decode(decoder: &mut Decoder, input: &[u8], options: &DecodeOptions) -> DecodeResult;
 
         /// Reset the decoder to its initial state.
         fn reset(decoder: &mut Decoder);
@@ -85,7 +90,14 @@ pub fn new_decoder(encoding: ffi::Encoding) -> Box<Decoder> {
     })
 }
 
-pub fn decode(state: &mut Decoder, input: &[u8], flush: bool, fatal: bool) -> ffi::DecodeResult {
+pub fn decode(
+    state: &mut Decoder,
+    input: &[u8],
+    options: &ffi::DecodeOptions,
+) -> ffi::DecodeResult {
+    // max_utf16_buffer_length() returns None on usize overflow. The +4 covers extra
+    // UTF-16 code units from decoder state. Safe even if slightly short since the decode loop
+    // below resizes on OutputFull.
     let max_len = state
         .inner
         .max_utf16_buffer_length(input.len())
@@ -94,12 +106,12 @@ pub fn decode(state: &mut Decoder, input: &[u8], flush: bool, fatal: bool) -> ff
     let mut total_read = 0usize;
     let mut total_written = 0usize;
 
-    if fatal {
+    if options.fatal {
         loop {
             let (result, read, written) = state.inner.decode_to_utf16_without_replacement(
                 &input[total_read..],
                 &mut output[total_written..],
-                flush,
+                options.flush,
             );
             total_read += read;
             total_written += written;
@@ -124,7 +136,7 @@ pub fn decode(state: &mut Decoder, input: &[u8], flush: bool, fatal: bool) -> ff
             let (result, read, written, _had_errors) = state.inner.decode_to_utf16(
                 &input[total_read..],
                 &mut output[total_written..],
-                flush,
+                options.flush,
             );
             total_read += read;
             total_written += written;
