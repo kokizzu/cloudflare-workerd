@@ -5,7 +5,7 @@ description: Memory safety, thread safety, concurrency, and critical detection p
 
 ## Safety Analysis — Memory, Thread Safety & Concurrency
 
-Load this skill when analyzing code for memory safety, thread safety, or concurrency correctness. This covers the most critical classes of bugs in workerd.
+Apply the checklists and detection patterns below when analyzing code for memory safety, thread safety, or concurrency correctness.
 
 ---
 

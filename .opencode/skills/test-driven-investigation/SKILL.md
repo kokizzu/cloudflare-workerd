@@ -35,7 +35,7 @@ Steps 1-2 should take minutes, not hours. You don't need to understand the full 
 
 ### Orientation
 
-Before writing the test you need to know three things: what object/API to exercise, what test file to put it in, and how to build/run it. Spend up to 10 minutes finding these. This is bounded research in service of the test -- not open-ended code analysis. If you don't know the exact API, pick the closest thing you can find and write the test anyway. A test that exercises the wrong API and passes still tells you something.
+Before writing the test you need to know three things: what object/API to exercise, what test file to put it in, and how to build/run it. Spend up to 20-30 tool calls finding these. This is bounded research in service of the test -- not open-ended code analysis. If you don't know the exact API, pick the closest thing you can find and write the test anyway. A test that exercises the wrong API and passes still tells you something.
 
 ## Check the Commit History
 
@@ -54,7 +54,7 @@ This is not a substitute for writing a test -- it's a way to form a better hypot
 - Changes to shared utilities or base classes used by the affected code
 - Refactors that moved or renamed things in the area
 
-**Keep it bounded:** This is 5 minutes of `git log` and `git show`, not an archaeology expedition. If nothing jumps out, move on and write the test with what you have. The commit history is one input to hypothesis formation, not a prerequisite for it.
+**Keep it bounded:** This is around 5 tool calls of `git log` and `git show`, not an archaeology expedition. If nothing jumps out, move on and write the test with what you have. The commit history is one input to hypothesis formation, not a prerequisite for it.
 
 ## When You're Tempted to Read More Code
 
@@ -119,7 +119,7 @@ It does NOT need to be:
 
 > "I have traced every code path and am certain that line 847 is the root cause because of the interaction between..."
 
-The first version is testable in 10 minutes. The second takes hours to construct and might still be wrong.
+The first version is testable in minutes. The second takes hours to construct and might still be wrong.
 
 ## After the Test
 

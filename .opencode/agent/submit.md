@@ -184,9 +184,9 @@ If changes need restructuring:
 
 ### 6. Check to see if GitHub comments are addressed
 
-If the current branch has an associated GitHub PR, fetch review comments via `gh api repos/{owner}/{repo}/pulls/{number}/comments` and review threads via `gh pr view --json comments`. Check whether resolved comments have actually been addressed in the current code. List any unresolved or incorrectly resolved comments and recommend addressing them before submission.
+If the current branch has an associated GitHub PR, check for conflicting changes with the main branch.
 
-If the current branch is not rebased on the latest main branch, recommend rebasing to pick up any new changes or fixes.
+**Note:** This step requires a fresh fetch. Run `git fetch origin main` before proceeding.
 
 ### 7. Try to identify conflicting changes
 

@@ -23,15 +23,12 @@ their subject matter. Do not rely on memory or general knowledge — the referen
 project-specific patterns and idioms that override general C++ conventions. Skipping a relevant
 reference file WILL lead to incorrect suggestions.**
 
-| File                            | MUST load when...                                                       |
-| ------------------------------- | ----------------------------------------------------------------------- |
-| `reference/api-patterns.md`     | Code uses or should use `kj::Maybe`, `kj::OneOf`, `kj::str()`,          |
-|                                 | `KJ_DEFER`, `KJ_SYSCALL`, `kj::downcast`, or KJ iteration helpers       |
-| `reference/async-patterns.md`   | Code involves `kj::Promise`, `.then()`, `.attach()`,                    |
-|                                 | `.eagerlyEvaluate()`, coroutines, `kj::MutexGuarded`, or `kj::TaskSet`  |
-| `reference/type-design.md`      | Designing new classes, reviewing class hierarchies, analyzing constness |
-|                                 | or thread safety semantics, or deciding value-type vs resource-type     |
-| `reference/review-checklist.md` | Performing ANY code review of workerd C++ code                          |
+| File                            | MUST load when...                                                                                                                           |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `reference/api-patterns.md`     | Code uses or should use `kj::Maybe`, `kj::OneOf`, `kj::str()`, `KJ_DEFER`, `KJ_SYSCALL`, `kj::downcast`, or KJ iteration helpers            |
+| `reference/async-patterns.md`   | Code involves `kj::Promise`, `.then()`, `.attach()`, `.eagerlyEvaluate()`, coroutines, `kj::MutexGuarded`, or `kj::TaskSet`                 |
+| `reference/type-design.md`      | Designing new classes, reviewing class hierarchies, analyzing constness or thread safety semantics, or deciding value-type vs resource-type |
+| `reference/review-checklist.md` | Performing ANY code review of workerd C++ code                                                                                              |
 
 When performing a code review, ALWAYS load `reference/review-checklist.md`. When in doubt
 about whether a reference file is relevant, load it — the cost of reading is far less than

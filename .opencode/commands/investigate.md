@@ -20,7 +20,7 @@ The argument can be:
 
 ## Steps
 
-### 1. Extract the error (5 minutes max)
+### 1. Extract the error
 
 **If Sentry issue:**
 
@@ -35,7 +35,7 @@ The argument can be:
 
 **Output to user:** The error message, crash site, and entry point. One short paragraph. Do not go deeper yet.
 
-### 2. Orient (10 minutes max)
+### 2. Orient
 
 Find three things:
 
@@ -107,7 +107,7 @@ When the mechanism is confirmed, output:
 ## Rules
 
 - **Work in parallel whenever possible.** Don't wait for the build to finish before reading code that would inform the next test iteration. Use the build time to maximize your learning and progress. Investigate multiple hypotheses in parallel if you can, but do not let this delay writing and running tests.
-- **Do not spend more than 15 minutes reading code before the first test is written and building.** If you hit 15 minutes, write whatever test you can with your current understanding.
+- **Do not spend more too much time reading code before the first test is written and building.** If you hit 15 tool calls, write whatever test you can with your current understanding.
 - **Do not re-read the same function more than twice.** If you catch yourself doing this, write a test immediately.
 - **Do not try to trace the full call stack before writing a test.** The test will tell you if your understanding is correct.
 - **Every hypothesis must be tested, not just reasoned about.**
