@@ -626,6 +626,16 @@ void WebSocket::close(jsg::Lock& js, jsg::Optional<int> code, jsg::Optional<kj::
         DOMInvalidAccessError, "Invalid WebSocket close code: ", c, ".");
   }
 
+  // Per the WHATWG WebSocket spec and RFC 6455 Section 5.5, the close frame body must not exceed
+  // 125 bytes (2-byte status code + up to 123 bytes of reason). Throw a SyntaxError if the
+  // reason's UTF-8 encoding is longer than 123 bytes.
+  if (FeatureFlags::get(js).getWebsocketCloseReasonByteLimit()) {
+    KJ_IF_SOME(r, reason) {
+      JSG_REQUIRE(r.size() <= 123, DOMSyntaxError,
+          "WebSocket close reason must not be longer than 123 bytes when UTF-8 encoded.");
+    }
+  }
+
   // The default code of 1005 cannot have a reason, per the standard, so if a reason is specified
   // then there must be a code, too.
   JSG_REQUIRE(reason == kj::none || code != kj::none, DOMInvalidAccessError,
