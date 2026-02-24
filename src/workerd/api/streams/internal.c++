@@ -545,10 +545,9 @@ kj::Maybe<jsg::Promise<ReadResult>> ReadableStreamInternalController::read(
       auto& ioContext = IoContext::current();
       return ioContext.awaitIoLegacy(js, kj::mv(promise))
           .then(js,
-              ioContext.addFunctor(
-                  [this, store = js.v8Ref(store), byteOffset, byteLength,
-                      isByob = maybeByobOptions != kj::none, ref = addRef()](
-                      jsg::Lock& js, size_t amount) mutable -> jsg::Promise<ReadResult> {
+              ioContext.addFunctor([this, store = js.v8Ref(store), byteOffset, byteLength,
+                                       isByob = maybeByobOptions != kj::none](jsg::Lock& js,
+                                       size_t amount) mutable -> jsg::Promise<ReadResult> {
         readPending = false;
         KJ_ASSERT(amount <= byteLength);
         if (amount == 0) {
@@ -690,7 +689,7 @@ kj::Maybe<jsg::Promise<DrainingReadResult>> ReadableStreamInternalController::dr
       auto& ioContext = IoContext::current();
       return ioContext.awaitIoLegacy(js, kj::mv(promise))
           .then(js,
-              ioContext.addFunctor([this, store = kj::mv(store), ref = addRef()](jsg::Lock& js,
+              ioContext.addFunctor([this, store = kj::mv(store)](jsg::Lock& js,
                                        size_t amount) mutable -> jsg::Promise<DrainingReadResult> {
         readPending = false;
         KJ_ASSERT(amount <= store.size());
