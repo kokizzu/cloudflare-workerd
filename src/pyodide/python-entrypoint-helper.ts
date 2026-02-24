@@ -32,6 +32,7 @@ import {
   PythonWorkersInternalError,
   reportError,
 } from 'pyodide-internal:util';
+import { PyodideVersion } from 'pyodide-internal:const';
 export { createImportProxy } from 'pyodide-internal:serializeJsModule';
 
 type PyFuture<T> = Promise<T> & { copy(): PyFuture<T>; destroy(): void };
@@ -132,7 +133,7 @@ async function pyimportMainModule(pyodide: Pyodide): Promise<PyModule> {
     );
   }
   const mainModuleName = MAIN_MODULE_NAME.slice(0, -3);
-  if (pyodide.version === '0.26.0a2') {
+  if (pyodide.version === PyodideVersion.V0_26_0a2) {
     return pyodide.pyimport(mainModuleName);
   } else {
     return await pyodide._module.API.pyodide_base.pyimport_impl.callPromising(
@@ -193,7 +194,7 @@ async function applyPatch(pyodide: Pyodide, patchName: string): Promise<void> {
 
 async function injectWorkersApi(pyodide: Pyodide): Promise<void> {
   const sitePackages = pyodide.FS.sitePackages;
-  if (pyodide.version === '0.26.0a2') {
+  if (pyodide.version === PyodideVersion.V0_26_0a2) {
     // Inject at cloudflare.workers for backwards compatibility
     pyodide.FS.mkdirTree(`${sitePackages}/cloudflare/workers`);
     await injectSitePackagesModule(
@@ -252,7 +253,7 @@ async function setupPatches(pyodide: Pyodide): Promise<void> {
     }
     // Other than the oldest version of httpx, we apply the patch at the build step.
     if (
-      pyodide._module.API.version === '0.26.0a2' &&
+      pyodide._module.API.version === PyodideVersion.V0_26_0a2 &&
       TRANSITIVE_REQUIREMENTS.has('httpx')
     ) {
       await applyPatch(pyodide, 'httpx');
