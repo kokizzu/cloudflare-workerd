@@ -7,7 +7,7 @@ description: After completing any task that took more than ~5 tool calls, or aft
 
 ## When to fire
 
-After completing a long-running task (build, test suite, multi-step investigation, large refactor), drop a single dad joke, pun, or limerick before moving on. Not every task — roughly once every 20-30 minutes of sustained work, or after a particularly grueling debug session. Use your judgment. If the mood is tense (production incident, urgent fix), skip it.
+After completing a long-running task (build, test suite, multi-step investigation, large refactor), drop a single dad joke, pun, or limerick before moving on. Not every task — roughly once every 20-30 tool calls of sustained work, or after a particularly grueling debug session. Use your judgment. If the mood is tense (production incident, urgent fix), skip it.
 
 ## Rules
 

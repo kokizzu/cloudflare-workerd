@@ -1,5 +1,8 @@
 # JSG (JavaScript Glue)
 
+See `README.md` for terse reference (type mappings, macro catalog, error catalog).
+See `docs/jsg.md` for narrative tutorial.
+
 ## OVERVIEW
 
 Macro-driven C++/V8 binding layer: declares C++ types as JS-visible resources/structs with automatic type conversion.
@@ -68,3 +71,39 @@ class MyType: public jsg::Object {
 - `JSG_CATCH` is NOT a true catch — cannot rethrow with `throw`
 - `NonCoercible<T>` runs counter to Web IDL best practices; avoid in new APIs
 - Rust JSG bindings: see `src/rust/jsg/` and `src/rust/jsg-macros/`
+
+## INVARIANTS
+
+These rules MUST be followed when writing or modifying JSG code:
+
+1. **MUST implement `visitForGc()`** on any Resource Type holding `Ref<T>`, `V8Ref<T>`,
+   `JsRef<T>`, `Function<T>`, `Promise<T>`, `Promise<T>::Resolver`, `BufferSource`, or
+   `Name` — see `README.md` §GC-Visitable Types for the complete list
+2. **MUST visit ALL GC-visitable fields** — missing one causes GC corruption
+3. **MUST NOT store `v8::Local<T>` or `JsValue` types as class members** — use `V8Ref<T>`
+   or `JsRef<T>` for persistence
+4. **MUST NOT put `v8::Global<T>` or `v8::Local<T>` in `JSG_STRUCT` fields** — use
+   `jsg::V8Ref<T>` or `jsg::JsRef<T>`
+5. **MUST NOT put `v8::Global<T>` or `v8::Local<T>` in `kj::Promise`** — compile-time deleted
+6. **MUST NOT pass `jsg::Lock` into KJ promise coroutines**
+7. **`JSG_SERIALIZABLE` MUST appear AFTER `JSG_RESOURCE_TYPE` block**, not inside it
+8. **Serialization tag enum values MUST NOT change** once data has been serialized
+9. **`Ref<T>` ownership MUST flow owner→owned**; backwards refs use raw `T&` or
+   `kj::Maybe<T&>`
+10. **Prefer `JSG_PROTOTYPE_PROPERTY`** over `JSG_INSTANCE_PROPERTY` unless there's a
+    specific reason — instance properties break GC optimization
+
+## CODE REVIEW RULE
+
+When reviewing changes to JSG code, check whether the change requires updates to
+any of these documentation files:
+
+- **`README.md`** — if the change adds/modifies type mappings, macros, error types,
+  serialization patterns, or reference tables
+- **`docs/jsg.md`** — if the change affects tutorial content, adds new patterns,
+  or changes API usage examples
+- **This file (`AGENTS.md`)** — if the change adds/removes files, changes the
+  architecture summary, or introduces new invariants
+
+Flag any needed doc updates in the review. Do not let behavioral or architectural
+changes land without corresponding documentation updates.

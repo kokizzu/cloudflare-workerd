@@ -5,7 +5,7 @@ description: Memory safety, thread safety, concurrency, and critical detection p
 
 ## Safety Analysis — Memory, Thread Safety & Concurrency
 
-Load this skill when analyzing code for memory safety, thread safety, or concurrency correctness. This covers the most critical classes of bugs in workerd.
+Apply the checklists and detection patterns below when analyzing code for memory safety, thread safety, or concurrency correctness.
 
 ---
 
@@ -20,6 +20,24 @@ Load this skill when analyzing code for memory safety, thread safety, or concurr
 - Review destructor correctness and cleanup order
 - Analyze lambda captures for safety
 - Consider patterns where weakrefs (see `util/weak-refs.h`) or other techniques would be safer
+- Methods that return references, pointers, `kj::ArrayPtr`, `kj::StringPtr`, or other non-owning
+  views into data owned by `this` (or by a parameter) should be annotated with `KJ_LIFETIMEBOUND`.
+  This expands to `[[clang::lifetimebound]]` and enables the compiler to warn when the returned
+  view outlives the object it borrows from. Flag missing annotations during review, especially on
+  accessors that return `kj::ArrayPtr<T>`, `kj::StringPtr`, `kj::Maybe<T&>`, or raw `T&`/`const T&`.
+- Functions that return owned resources, `kj::Maybe`, error indicators, or expensive-to-compute
+  results should be annotated with `KJ_WARN_UNUSED_RESULT`. This catches two classes of problems:
+  silently discarding results the caller must act on (e.g., error codes, `kj::Promise`), and
+  performing expensive computation whose result is thrown away. `kj::Promise` is already
+  `[[nodiscard]]` at the type level, but other return types need per-function annotation.
+- Lambdas that capture `jsg::Ref<T>` or other GC-traced references must use `JSG_VISITABLE_LAMBDA`
+  (see `jsg/function.h`) so V8's GC can trace through the captures. Without it, captured JS-heap
+  objects can be collected while the lambda still references them. Flag closures stored for deferred
+  execution that capture GC-managed types without using this macro.
+- RAII scope guards, locks, and other types with positional semantics must use
+  `KJ_DISALLOW_COPY_AND_MOVE` to prevent accidental moves that break scope invariants. Use
+  `KJ_DISALLOW_COPY` only when explicit move semantics are intentionally provided. Flag new
+  scope-guard or lock types that are missing these annotations.
 
 ### Thread Safety & Concurrency
 
@@ -30,7 +48,10 @@ Load this skill when analyzing code for memory safety, thread safety, or concurr
 - Review promise/async patterns for correctness
 - Identify thread-unsafe code in concurrent contexts
 - Analyze KJ event loop interactions
-- Ensure that code does not attempt to use isolate locks across suspension points in coroutines
+- Ensure that code does not attempt to use isolate locks across suspension points in coroutines.
+  Types that must never be held across `co_await` should carry the `KJ_DISALLOW_AS_COROUTINE_PARAM`
+  annotation for compile-time enforcement. This is already applied to `jsg::Lock`, `Worker::Lock`,
+  `jsg::V8StackScope`, and similar types. Flag new lock or scope types that are missing it.
 - Ensure that RAII objects and other types that capture raw pointers or references are not unsafely
   used across suspension points
 - When reviewing V8 integration, pay particular attention to GC interactions and cleanup order
@@ -61,6 +82,7 @@ Beyond these specific patterns, also watch for non-obvious complexity at V8/KJ b
 
 - **Broad capture in async lambda**: Lambda passed to `.then()` or stored for deferred execution using `[&]` or `[this]` when only specific members are needed. Prefer explicit captures and carefully consider captured variable lifetimes.
 - **Implicit GC trigger in sensitive context**: V8 object allocations (e.g., `ArrayBuffer` backing store creation, string flattening, `v8::Object::New()`) inside hot loops or time-sensitive callbacks may trigger GC unexpectedly.
+- **Missing `DISALLOW_KJ_IO_DESTRUCTORS_SCOPE` awareness**: The `DISALLOW_KJ_IO_DESTRUCTORS_SCOPE` macro (see `jsg/wrappable.h`) creates a scope that crashes the process if any KJ async/I/O object is destroyed. It enforces that JS-heap objects use `IoOwn`/`IoPtr` rather than holding I/O objects directly. `IoOwn`'s destructor creates a matching `AllowAsyncDestructorsScope` to permit safe destruction. When reviewing code that introduces new GC or destructor paths, verify these scopes are correctly nested.
 
 ---
 
