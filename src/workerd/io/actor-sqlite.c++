@@ -424,6 +424,7 @@ kj::Promise<void> ActorSqlite::commitImpl(
       KJ_LOG(WARNING, "NOSENTRY DEBUG_ALARM: Commit merge waiting", logDate(alarmBeforeMerge),
           alarmVersion);
     }
+    commitSpan.setTag("merged_with_pending_commit"_kjc, true);
     co_await pending.addBranch();
     if (debugAlarmSync) {
       auto alarmAfterMerge = metadata.getAlarm();
@@ -446,6 +447,7 @@ kj::Promise<void> ActorSqlite::commitImpl(
   // while() loop, but needed to be initiated synchronously before the local database commit to
   // ensure correctness in workerd.
   KJ_IF_SOME(p, precommitAlarmState.schedulingPromise) {
+    auto alarmSpan = commitSpan.newChild("actor_sqlite_alarm_sync"_kjc);
     haveAlarmForDebug = true;
     co_await p;
   }
@@ -457,6 +459,7 @@ kj::Promise<void> ActorSqlite::commitImpl(
   int syncIterations = 0;
   auto startAlarmState = metadata.getAlarm();
   while (willFireEarlier(metadata.getAlarm(), alarmScheduledNoLaterThan)) {
+    auto alarmSpan = commitSpan.newChild("actor_sqlite_alarm_sync"_kjc);
     if (debugAlarmSync) {
       haveAlarmForDebug = true;
       auto currentAlarmState = metadata.getAlarm();
@@ -539,6 +542,7 @@ kj::Promise<void> ActorSqlite::commitImpl(
       // to requestScheduledAlarm, and so if we have a partial failure we would just recover when
       // the alarm runs early. That said, it doesn't hurt to serialize on the client-side.
       alarmLaterChain = requestScheduledAlarm(alarmStateForCommit, alarmLaterChain.addBranch())
+                            .attach(commitSpan.newChild("actor_sqlite_alarm_sync"_kjc))
                             .catch_([](kj::Exception&& e) {
         // If an exception occurs when scheduling the alarm later, it's OK -- the alarm will
         // eventually fire at the earlier time, and the rescheduling will be retried.
