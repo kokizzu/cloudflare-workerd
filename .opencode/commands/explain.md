@@ -5,34 +5,43 @@ subtask: true
 
 Explain: $ARGUMENTS
 
-Steps:
+This command produces reference documentation, structured like a `man` page. Be exhaustive for narrow targets (a single class, function, or file). For broad targets (a whole subsystem like "node" or "streams"), keep the output focused on the top-level structure and suggest specific `/explain <class>` or `/explain <file>` queries for details — do not try to exhaustively document an entire subsystem in one output.
 
-1. **Locate the target.** If the argument is a file path, read it. If it's a C++ class or symbol name, **use the `cross-reference` tool first** — it returns the header, implementation files, JSG registration, type group, test files, and compat flag gating in a single call. This replaces manual grep/glob for the initial lookup and saves significant context.
+## Research steps
 
-2. **Read the definition.** Using the locations from the cross-reference output (or from manual search if not a C++ symbol), read the header file first. For JSG-registered types, also **use the `jsg-interface` tool** to get the full structured JS API (methods, properties, constants, nested types, inheritance, TypeScript overrides) — this is much more useful than reading raw macro lines. For functions, read the declaration and implementation. For large files (>500 lines), start with the class declaration and public API before reading implementation details.
+1. **Locate the target.** If the argument is a file path, read it. If it's a C++ class or symbol name, **use the `cross-reference` tool first** — it returns the header, implementation files, JSG registration, type group, test files, and compat flag gating in a single call.
+
+2. **Read the definition.** Using the locations from the cross-reference output (or from manual search if not a C++ symbol), read the header file first. For functions, read the declaration and implementation. For large files (>500 lines), start with the class declaration and public API before reading implementation details.
 
 3. **Check for local documentation.** Look for:
    - An `AGENTS.md` in the same directory or nearest parent
    - A `README.md` in the same directory
    - Doc comments on the symbol itself
 
-4. **Trace relationships.** The cross-reference output already provides implementation files, test files, and type registration. For deeper analysis, also identify:
-   - What this code depends on (base classes, key types used, includes)
-   - What depends on this code (grep for callers, subclasses, or includes of the header)
-   - Limit to the most important 5-10 relationships, not an exhaustive list
+4. **Get the full API surface.** For JSG-registered types, **use the `jsg-interface` tool** to get the complete structured JS API (methods, properties, constants, nested types, inheritance, TypeScript overrides). For header files, identify all public members. For config schemas (`.capnp`), list all fields.
 
-5. **Identify the architectural layer.** Place it in context:
-   - Is this API layer (`api/`), I/O layer (`io/`), JSG bindings (`jsg/`), server infrastructure (`server/`), or utility (`util/`)?
-   - What is its role in the request lifecycle or worker lifecycle?
+5. **Find build and test targets.** Check the `BUILD.bazel` in the same directory for the relevant Bazel target. Note how to build and test it (e.g., `just test //src/workerd/api/tests:some-test@`).
 
-6. **Identify recent changes.** Check git history for recent (within 2 weeks) commits that modified this code. This can provide clues about its current relevance, stability, and any ongoing refactors or deprecations.
+6. **Find real code examples.** Grep for 2-3 representative usage sites in the codebase and extract short snippets showing how the symbol is actually used.
 
-7. **Output a concise summary** with:
-   - **What it is**: One-sentence description
-   - **Where it lives**: File path(s) and architectural layer
-   - **Key responsibilities**: Bullet list of what it does
-   - **Key relationships**: What it depends on and what depends on it
-   - **Notable patterns or gotchas**: Anti-patterns, compat flag gating, thread safety considerations, or other things a developer should know
-   - **Recent changes**: If there have been recent commits, a brief note on what they were about
+7. **Check recent history.** Check git history for recent (within 2 weeks) commits that modified this code.
 
-8. **Never** miss an opportunity for a good dad joke (using the `dad-jokes` skill). Don't overdo it, but don't avoid them either. When summarizing, **always** preserve any jokes from the subagent output, and **always** including the intro prefix ("Here's a dad joke for you:", etc.) so the user knows it's intentional.
+## Output format
+
+Structure the output using these sections. Omit any section that doesn't apply to the target (e.g., skip CONFIGURATION if there are no compat flags).
+
+- **NAME** — One-line description of what it is.
+- **SYNOPSIS** — For APIs: signature or usage pattern. For modules: import path. For config: field syntax. For subsystems: the key entry points.
+- **DESCRIPTION** — 1-2 paragraphs covering what it does, why it exists, and what architectural layer it belongs to (`api/`, `io/`, `jsg/`, `server/`, `util/`). Keep it factual.
+- **API** — For narrow targets (a single class/file): exhaustive listing of all methods, properties, constants, nested types, and their signatures. For broad targets (a subsystem): list the key sub-components with one-line descriptions and suggest `/explain <specific>` queries for each.
+- **FILES** — Relevant files with their paths and one-line roles.
+- **BUILD** — Bazel target(s) and the command to build/test (e.g., `just test //src/workerd/api/tests:crypto-test@`).
+- **CONFIGURATION** — Compat flags, autogates, or config fields that control this code's behavior.
+- **EXAMPLES** — 2-3 short code snippets from the actual codebase showing how this symbol is used. Include the source file path for each.
+- **CAVEATS** — Anti-patterns, thread safety issues, known limitations, or things that will surprise you.
+- **SEE ALSO** — Related symbols (as `/explain <target>` suggestions), plus `/trace` or `/deps` pointers where relevant.
+- **HISTORY** — Recent git changes, if any. Brief note on what they were about.
+
+## Notes
+
+- **Never** miss an opportunity for a good dad joke (using the `dad-jokes` skill). Don't overdo it, but don't avoid them either. When summarizing, **always** preserve any jokes from the subagent output, and **always** including the intro prefix ("Here's a dad joke for you:", etc.) so the user knows it's intentional.

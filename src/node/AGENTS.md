@@ -2,26 +2,25 @@
 
 ## OVERVIEW
 
-TypeScript layer implementing Node.js built-in modules for Workers. ~70 top-level `.ts` files (one per `node:*` module) re-export from `internal/` implementations. No index.ts — C++ side registers each module. Tests live in `src/workerd/api/node/tests/`, not here. See `README.md` for 12 policy rules governing compat scope.
+TypeScript and JavaScript layer implementing Node.js compatible built-in modules for Workers.
 
-## ARCHITECTURE
+It is split across multiple layers:
 
-Three-tier module system:
+1. An **internal layer** consisting of:
+  - Non-user-importable TypeScript and JavaScript files in `internal/` that implement core logic, utilities, and C++ JSG module declarations.
+  - C++ JSG modules  (`src/workerd/api/node/`) expose native ops via `node-internal:*` specifiers
+  - Some native internal modules may be implemented in Rust
+2. A **public layer** of TypeScript files at the top-level that are user-importable.
 
-1. **C++ JSG modules** (`src/workerd/api/node/`) expose native ops via `node-internal:*` specifiers
-2. **`internal/*.d.ts`** declare shapes the C++ modules provide (e.g., `crypto.d.ts`, `buffer.d.ts`)
-3. **`internal/*.ts`** build full API surface; **top-level `*.ts`** re-export public API
+It is common, but not required, for top-level `.ts` files to re-export from `internal/` via `node-internal:` specifiers. This allows for a clean separation between public API surface and internal implementation details.
 
-Import specifiers:
-
-- `node:buffer` → `src/node/buffer.ts` (public, user-importable)
-- `node-internal:internal_buffer` → `src/node/internal/internal_buffer.ts` (private)
-- `node-internal:crypto` → C++ JSG module declared by `internal/crypto.d.ts`
-- `cloudflare-internal:*` → runtime-provided APIs (filesystem, sockets, http, messagechannel, workers)
-
-Build: single `wd_ts_bundle` rule in `BUILD.bazel`; `modules` = public, `internal_modules` = private.
+See `README.md` for 12 policy rules governing compat scope and philosophy.
 
 ## MODULE GATING
+
+`node:*` modules are gated behind the `nodejs_compat` compatibility flag.
+
+The `node:async_hooks` module can be enabled individually via the `nodejs_als` compatibility flag.
 
 Runtime compat flags checked via `Cloudflare.compatibilityFlags['flag_name']`:
 
@@ -43,3 +42,4 @@ Most modules require `nodejs_compat` + `nodejs_compat_v2` flags (enforced by C++
 - Feature-gated exports use `if (!flag) { throw ... }` or conditional class assignment patterns
 - Shared validators in `internal/validators.ts`; shared errors in `internal/internal_errors.ts`
 - `_` prefix files (e.g., `_http_agent.ts`, `_stream_readable.ts`) = Node.js legacy internal module aliases
+- Some Node.js compat APIs are non-functional stubs that are either non-ops or throw when called

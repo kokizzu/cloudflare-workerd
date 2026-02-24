@@ -85,13 +85,15 @@ Skip the general approach steps below — this area does not involve a code walk
 
 ### General approach for all areas
 
+The goal is orientation, not reference. Keep the reader focused on what they need to understand first — not everything that exists. For exhaustive detail (full API surfaces, complete file listings, build targets), defer to `/explain`.
+
 1. **Read context**: Read the relevant `AGENTS.md` file for the area (e.g., `src/workerd/api/streams/AGENTS.md` for streams). Also check for a `README.md` in the directory.
-2. **Explain the subsystem**: What it does, why it exists, how it fits into the broader architecture. Keep it to 2-3 paragraphs.
-3. **Key classes and files**: List the 5-10 most important classes/files with one-line descriptions and file paths.
-4. **Concrete example**: Walk through one specific flow end-to-end (e.g., "here's what happens when a fetch() response body is read as a stream").
+2. **Explain the subsystem**: What it does, why it exists, how it fits into the broader architecture. Keep it to 2-3 paragraphs. Stick to facts — don't editorialize or speculate.
+3. **Key classes and files**: List the 3-5 most important classes/files with one-line descriptions and file paths. Focus on what to read first, not everything. For the complete listing, suggest `/explain <area>`.
+4. **Concrete example**: Walk through one specific flow end-to-end (e.g., "here's what happens when a fetch() response body is read as a stream"). **This is the most important section** — it's what builds intuition. Make it the longest and most detailed part of the output.
 5. **Key patterns to know**: Patterns specific to this area that a newcomer needs to understand (e.g., `IoOwn` for io, JSG macros for jsg, compat flag gating for api).
 6. **Tests to read**: Point to 2-3 representative tests that demonstrate how the code works.
-7. **Further reading**: Suggest related `/onboarding <area>` topics, relevant `/explain` targets, or docs.
+7. **Further reading**: Suggest related `/onboarding <area>` topics for adjacent areas. For detailed reference on specific classes or files mentioned above, point to `/explain <target>`.
 8. **Never** miss an opportunity for a good dad joke (using the `dad-jokes` skill). Don't overdo it, but don't avoid them either. When summarizing, **always** preserve any jokes from the subagent output, and **always** including the intro prefix ("Here's a dad joke for you:", etc.) so the user knows it's intentional.
 
 ### Area-specific sources

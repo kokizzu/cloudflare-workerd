@@ -2,12 +2,17 @@
 
 ## OVERVIEW
 
-TypeScript implementations of Cloudflare product APIs (AI, D1, R2, Vectorize, etc.). Top-level `.ts` files re-export from `internal/` via `cloudflare-internal:` specifiers. `internal/*.d.ts` declare types for C++ runtime bindings; `internal/*.ts` contain actual logic.
+TypeScript implementations of Cloudflare product APIs (AI, D1, R2, Vectorize, etc.).
+
+- The `internal/*` directory contains internal implementation details not directly exposed to user code.
+- The top-level `.ts` files are the public API entry points exposed to user code.
+
+It is common, but not required, for top-level `.ts` files to re-export from `internal/` via `cloudflare-internal:` specifiers. This allows for a clean separation between public API surface and internal implementation details.
 
 ## STRUCTURE
 
-- `<product>.ts` — Public entry point; re-exports from `cloudflare-internal:<product>-api`
-- `internal/<product>-api.ts` — Implementation; imports runtime types from sibling `.d.ts`
+- `<product>.ts` — Public entry point; e.g `ai.ts` for AI maps to `cloudflare:ai`
+- `internal/*.ts` — Implementation; imports runtime types from sibling `.d.ts`
 - `internal/*.d.ts` — Type declarations for C++ runtime-provided modules (no implementation)
 - `internal/tracing-helpers.ts` — Shared instrumentation (`withSpan`); imported as `cloudflare-internal:tracing-helpers`
 - `internal/test/<product>/` — Per-product test directory
