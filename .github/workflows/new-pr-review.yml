@@ -21,7 +21,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          fetch-depth: 30 # Fetch some history; not all of it
 
       - name: Load review prompt
         id: prompt
