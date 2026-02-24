@@ -1846,6 +1846,13 @@ Worker::Worker(kj::Own<const Script> scriptParam,
                 auto limitScope =
                     script->isolate->getLimitEnforcer().enterStartupJs(lock, limitErrorOrTime);
                 unboundScript.run(lock);
+                // Flush microtasks enqueued during top-level script evaluation.
+                // Without this flush, microtasks (e.g. promise continuations from async
+                // initialization) remain on the per-isolate microtask queue and can leak across
+                // V8 contexts when multiple Workers share an isolate (same script, different
+                // zones). The leaked microtasks then execute under the wrong IoContext, making
+                // things go boom.
+                lock.runMicrotasks();
               }
               KJ_CASE_ONEOF(mainModule, kj::Path) {
                 KJ_IF_SOME(ns,
