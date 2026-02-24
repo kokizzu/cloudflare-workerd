@@ -28,6 +28,8 @@ jobs:
         run: |
           {
             echo 'value<<EOF'
+            echo "You are reviewing PR #${{ github.event.pull_request.number }} on ${{ github.repository }}."
+            echo ""
             cat .github/bonk_reviewer.md
             echo EOF
           } >> "$GITHUB_OUTPUT"
