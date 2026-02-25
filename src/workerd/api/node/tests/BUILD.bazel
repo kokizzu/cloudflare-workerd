@@ -616,6 +616,12 @@ wd_test(
 )
 
 wd_test(
+    src = "fs-cp-into-subdirectory-test.wd-test",
+    args = ["--experimental"],
+    data = ["fs-cp-into-subdirectory-test.js"],
+)
+
+wd_test(
     src = "fs-readstream-test.wd-test",
     args = ["--experimental"],
     data = ["fs-readstream-test.js"],
