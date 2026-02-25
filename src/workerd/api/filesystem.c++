@@ -1680,6 +1680,20 @@ void cpImpl(jsg::Lock& js,
                       jsg::Url::EquivalenceOption::NORMALIZE_PATH),
       Error, "Source and destination paths must not be the same"_kj);
 
+  // Cannot copy a directory to a subdirectory of itself. The pathnames are
+  // already normalized by jsg::Url (no .., //, or trailing slashes except root).
+  {
+    auto srcPath = src.getPathname();
+    auto destPath = dest.getPathname();
+    KJ_ASSERT(srcPath.size() > 0, "normalized URL pathname must not be empty");
+    auto srcPrefix = srcPath.back() == '/' ? kj::str(srcPath) : kj::str(srcPath, "/");
+    auto destStr = kj::StringPtr(destPath.begin(), destPath.size());
+    if (destStr.size() > srcPrefix.size() && destStr.startsWith(srcPrefix)) {
+      node::THROW_ERR_FS_CP_EINVAL(
+          js, kj::str("Cannot copy '", srcPath, "' to a subdirectory of itself, '", destPath, "'"));
+    }
+  }
+
   // Step 1: If deferenceSymlinks is true, the we will be following symbolic links. If
   // it is false, we won't be.
 
