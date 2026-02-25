@@ -9,9 +9,11 @@ This command produces reference documentation, structured like a `man` page. Be 
 
 ## Research steps
 
-1. **Locate the target.** If the argument is a file path, read it. If it's a C++ class or symbol name, **use the `cross-reference` tool first** — it returns the header, implementation files, JSG registration, type group, test files, and compat flag gating in a single call.
+1. **Locate the target.** If the argument is a file path, read it. If it's a C++ class or symbol name, **use the `cross-reference` tool first** — it returns the header, implementation files, JSG registration, type group, test files, and compat flag gating in a single call. If the target is a Rust symbol or `.rs` file (under `src/rust/`), skip the `cross-reference` tool and search manually — it is C++-specific.
 
 2. **Read the definition.** Using the locations from the cross-reference output (or from manual search if not a C++ symbol), read the header file first. For functions, read the declaration and implementation. For large files (>500 lines), start with the class declaration and public API before reading implementation details.
+
+   **For Rust code:** Read the relevant `lib.rs` or module file. Look for `#[jsg_resource]`, `#[jsg_method]`, `#[jsg_struct]`, and `#[jsg_oneof]` proc macro annotations to understand the JS-visible API surface. Check `#[cxx::bridge]` blocks to understand the FFI boundary with C++. Also check the CXX bridge companion files (`ffi.c++`/`ffi.h`) and the C++ code that calls into or is called from Rust. Consult the crate's `README.md` (if present) and `src/rust/AGENTS.md` for crate-level context. If the type uses proc macros, the `<crate>@expand` Bazel target can be used to inspect macro expansion.
 
 3. **Check for local documentation.** Look for:
    - An `AGENTS.md` in the same directory or nearest parent

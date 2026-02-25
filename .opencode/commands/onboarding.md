@@ -29,6 +29,7 @@ Onboard: $ARGUMENTS
    - `/onboarding io` — I/O context, ownership, worker lifecycle
    - `/onboarding actors` — Durable Objects, storage, gates
    - `/onboarding jsg` — V8 bindings, JSG macros, type registration
+   - `/onboarding rust` — Rust crates, CXX FFI, Rust JSG bindings, proc macros
    - `/onboarding just` — `just` command runner: available recipes and aliases
    - `/onboarding build` — Bazel, dependencies, test formats
    - `/onboarding server` — Config, services, networking
@@ -110,5 +111,6 @@ Always apply the general approach above, but use these specific sources for each
 | `io`           | `src/workerd/io/AGENTS.md` — IoContext, IoOwn, DeleteQueue, InputGate/OutputGate, Worker::Actor                                                                                                                                                                                                                               |
 | `actors`       | `src/workerd/io/AGENTS.md`, `src/workerd/api/actor-state.h` — Actor lifecycle, ActorCache vs ActorSqlite, gates, hibernation                                                                                                                                                                                                  |
 | `jsg`          | `src/workerd/jsg/AGENTS.md`, `docs/jsg.md` — JSG_RESOURCE_TYPE, JSG_METHOD, type mapping, V8 integration                                                                                                                                                                                                                      |
+| `rust`         | `src/rust/AGENTS.md`, `src/rust/jsg/README.md`, `src/rust/jsg-macros/README.md` — CXX FFI bridges, Rust JSG bindings (`#[jsg_resource]`, `#[jsg_method]`), proc macros, crate organization, `just clippy`, error handling patterns                                                                                            |
 | `build`        | `build/AGENTS.md`, `AGENTS.md` — Bazel targets, `just` commands, `wd_test`/`kj_test` macros, dependency management (`MODULE.bazel`, `build/deps/`)                                                                                                                                                                            |
 | `server`       | `src/workerd/server/AGENTS.md` — workerd.capnp config, Server class, service setup, networking                                                                                                                                                                                                                                |

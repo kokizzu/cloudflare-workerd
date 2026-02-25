@@ -7,7 +7,7 @@ Trace call graph for: $ARGUMENTS
 
 Steps:
 
-1. **Find the definition.** If the target is a method on a C++ class, **use the `cross-reference` tool first** to locate the header, implementation files, and JSG registration in a single call. Otherwise, search for the function/method definition manually. If the argument is ambiguous (e.g., a common name like `get`), ask for clarification or use the class-qualified form (e.g., `IoContext::current`).
+1. **Find the definition.** If the target is a method on a C++ class, **use the `cross-reference` tool first** to locate the header, implementation files, and JSG registration in a single call. For Rust symbols (under `src/rust/`), search `.rs` files manually and check for CXX bridge declarations. Otherwise, search for the function/method definition manually. If the argument is ambiguous (e.g., a common name like `get`), ask for clarification or use the class-qualified form (e.g., `IoContext::current`).
 
 2. **Read the implementation.** Read the function body to identify:
    - **Direct callees**: functions/methods called within the body
@@ -16,10 +16,12 @@ Steps:
 3. **Find callers.** Search for call sites across the codebase:
 
    ```
-   grep -rn '<function_name>' src/ --include='*.h' --include='*.c++'
+   grep -rn '<function_name>' src/ --include='*.h' --include='*.c++' --include='*.rs'
    ```
 
    Filter to actual calls (not declarations, comments, or string literals). For methods, search for both `->methodName(` and `.methodName(` patterns.
+
+   **For functions crossing the Rust/C++ FFI boundary** (defined in a `#[cxx::bridge]` block or companion `ffi.c++`/`ffi.h` file), search both sides: a Rust function called from C++ will have callers in `.c++` files and its declaration in the CXX bridge; a C++ function called from Rust will have its Rust callers in `.rs` files and its implementation in `ffi.c++`. Also check generated headers (`<file>.rs.h`) if the call path is unclear.
 
 4. **Build the call graph.** Organize into:
    - **Callers** (who calls this function) — grouped by directory/component

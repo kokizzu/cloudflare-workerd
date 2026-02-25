@@ -5,32 +5,20 @@ subtask: true
 
 Show dependencies for: $ARGUMENTS
 
-Steps:
+**Use the `bazel-deps` tool** with `direction: "deps"` to perform this lookup. It handles file path resolution, Bazel queries (forward and reverse in parallel), and grouping automatically. Pass the argument as the `target`.
 
-1. **Resolve the target.** If the argument is a file path, find its Bazel target first by checking the `BUILD.bazel` in the same directory. If it's already a Bazel label (e.g., `//src/workerd/api:http`), use it directly.
+The target supports ecosystem qualifiers to disambiguate when a name matches both C++ and Rust targets:
 
-2. **Direct dependencies.** Run:
+- `rust:base64` or `crate:base64` — resolve as a Rust crate only
+- `cpp:base64` or `cc:base64` — resolve as a C++ target only
+- Unqualified names (e.g. `base64`) use the default resolution order (C++ first, then Rust)
 
-   ```
-   bazel query 'deps(<target>, 1)' --output label 2>/dev/null
-   ```
+Pass the full argument including any qualifier as the `target` (e.g. `target: "rust:base64"`).
 
-   This shows what the target directly depends on.
+If the user asks for the full transitive graph, pass `depth: 2` or `depth: 3`. Warn that deeper queries can be slow.
 
-3. **Reverse dependencies** (what depends on this target). Run:
+After receiving the tool output, add any useful observations:
 
-   ```
-   bazel query 'rdeps(//src/..., <target>, 1)' --output label 2>/dev/null
-   ```
-
-   This shows what directly depends on this target within `src/`.
-
-4. **If the user asks for the full transitive graph**, use depth 2-3 instead of 1, but warn that deep queries can be slow.
-
-5. **Output:**
-   - **Target**: the resolved Bazel label
-   - **Direct dependencies**: grouped by type (internal `//src/...` vs external `@...`)
-   - **Reverse dependencies**: what depends on this target (within `src/`)
-   - **Notable observations**: circular dependency risks, unusually large dependency sets, or external deps that may be surprising
-
-   Keep the output concise. If there are more than 20 deps in a category, summarize the count and list the most important ones.
+- Are there circular dependency risks or unusually large dependency sets?
+- Are there surprising external dependencies?
+- For targets with many reverse dependents, note the impact of changes to this target.

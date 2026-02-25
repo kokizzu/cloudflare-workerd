@@ -31,3 +31,10 @@ When reviewing workerd C++ code, check for each of these items.
 25. **Direct `new`/`delete` (via `new` expression)**: Should use `kj::heap<T>()`, `kj::heapArray<T>()`, or other KJ memory utilities.
 26. **Explicit `throw` statement**: Should use `KJ_ASSERT`, `KJ_REQUIRE`, `KJ_FAIL_ASSERT`, or `KJ_EXCEPTION` instead of bare `throw`.
 27. **Magic numbers**: Numeric literals without explanation or named constants.
+28. **Copyright header on new files**: Every new `.c++` and `.h` file must begin with the project copyright/license header using the current year (not copied from older files). Expected format:
+    ```
+    // Copyright (c) <current-year> Cloudflare, Inc.
+    // Licensed under the Apache 2.0 license found in the LICENSE file or at:
+    //     https://opensource.org/licenses/Apache-2.0
+    ```
+    Flag any new file that uses a stale year (e.g., `2017-2022` in a file created in 2026) or omits the header entirely.
