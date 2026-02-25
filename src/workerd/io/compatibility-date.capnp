@@ -1367,7 +1367,8 @@ struct CompatibilityFlags @0x8f8c1b68151b6cef {
 
   queueExposeErrorCodes @158 :Bool
     $compatEnableFlag("queue_expose_error_codes")
-    $compatDisableFlag("no_queue_expose_error_codes");
+    $compatDisableFlag("no_queue_expose_error_codes")
+    $compatEnableDate("2026-03-12");
   # When enabled, queue operations will include detailed error information (error code and cause)
 
   textDecoderReplaceSurrogates @159 :Bool
