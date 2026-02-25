@@ -1,12 +1,8 @@
-# Idiomatic KJ API Patterns
-
-Detailed code examples for common KJ API usage patterns in workerd.
-
----
+Detailed code examples for idiomatic KJ API usage patterns in workerd.
 
 ### Unwrapping `kj::Maybe`
 
-Always use `KJ_IF_SOME`, never dereference directly:
+**Always** use `KJ_IF_SOME`. **Never** dereference directly.
 
 ```cpp
 // Correct:
@@ -24,7 +20,7 @@ auto& value = *maybeValue;      // doesn't exist
 auto& value = maybeValue.value(); // not how KJ works
 ```
 
-`maybe.map(fn)` and `maybe.orDefault(val)` are useful for simple transforms/fallbacks.
+**Maybe** use `maybe.map(fn)` and `maybe.orDefault(val)` are useful for simple transforms/fallbacks.
 
 When moving a value out of a `kj::Maybe`, use `kj::mv()` and remember to set the `kj::Maybe` to `kj::none` to avoid dangling references:
 
@@ -38,7 +34,7 @@ KJ_IF_SOME(value, maybeValue) {
 
 ### Unwrapping `kj::OneOf`
 
-Always use `KJ_SWITCH_ONEOF` / `KJ_CASE_ONEOF`:
+**Always** use `KJ_SWITCH_ONEOF` / `KJ_CASE_ONEOF`:
 
 ```cpp
 KJ_SWITCH_ONEOF(variant) {
@@ -49,7 +45,7 @@ KJ_SWITCH_ONEOF(variant) {
 
 ### Building Strings
 
-Use `kj::str()`, never `std::to_string` or `+` concatenation:
+**Always** use `kj::str()`, never `std::to_string` or `+` concatenation:
 
 ```cpp
 kj::String msg = kj::str("count: ", count, ", name: ", name);
