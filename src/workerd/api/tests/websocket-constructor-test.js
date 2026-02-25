@@ -84,3 +84,41 @@ export const closeReasonMultibyteExceeds = {
     ws.close();
   },
 };
+
+// Test that close() replaces lone surrogates with U+FFFD per the USVString spec.
+// This is tested end-to-end by the WPT Close-reason-unpaired-surrogates.any.js test.
+// Here we verify the CloseEvent constructor also applies USVString conversion.
+export const closeReasonUSVString = {
+  async test() {
+    // CloseEvent.reason is typed as USVString per the HTML spec,
+    // so lone surrogates must be replaced with U+FFFD.
+    const evt = new CloseEvent('close', { code: 1000, reason: '\uD807' });
+    strictEqual(
+      evt.reason,
+      '\uFFFD',
+      'CloseEvent reason should replace lone surrogate with U+FFFD'
+    );
+
+    // Multiple surrogates in a string.
+    const evt2 = new CloseEvent('close', {
+      code: 1000,
+      reason: 'hello\uD800world\uDC00end',
+    });
+    strictEqual(
+      evt2.reason,
+      'hello\uFFFDworld\uFFFDend',
+      'CloseEvent reason should replace each lone surrogate with U+FFFD'
+    );
+
+    // Properly paired surrogates should pass through unchanged.
+    const evt3 = new CloseEvent('close', {
+      code: 1000,
+      reason: '\uD83D\uDE00',
+    });
+    strictEqual(
+      evt3.reason,
+      '\uD83D\uDE00',
+      'Properly paired surrogates should not be replaced'
+    );
+  },
+};

@@ -42,7 +42,7 @@ class CloseEvent: public Event {
 
   struct Initializer {
     jsg::Optional<int> code;
-    jsg::Optional<kj::String> reason;
+    jsg::Optional<jsg::USVString> reason;
     jsg::Optional<bool> wasClean;
 
     JSG_STRUCT(code, reason, wasClean);
@@ -52,7 +52,7 @@ class CloseEvent: public Event {
       jsg::Lock& js, kj::String type, jsg::Optional<Initializer> initializer) {
     Initializer init = kj::mv(initializer).orDefault({});
     return js.alloc<CloseEvent>(kj::mv(type), init.code.orDefault(0),
-        kj::mv(init.reason).orDefault(nullptr), init.wasClean.orDefault(false));
+        kj::mv(init.reason).orDefault(jsg::USVString(kj::str())), init.wasClean.orDefault(false));
   }
 
   int getCode() {
@@ -303,7 +303,7 @@ class WebSocket: public EventTarget {
   void startReadLoop(jsg::Lock& js, kj::Maybe<kj::Own<InputGate::CriticalSection>> cs);
 
   void send(jsg::Lock& js, kj::OneOf<kj::Array<byte>, kj::String> message);
-  void close(jsg::Lock& js, jsg::Optional<int> code, jsg::Optional<kj::String> reason);
+  void close(jsg::Lock& js, jsg::Optional<int> code, jsg::Optional<jsg::USVString> reason);
 
   // Used to get/set the attachment for hibernation.
   // If the object isn't serialized, it will not survive hibernation.

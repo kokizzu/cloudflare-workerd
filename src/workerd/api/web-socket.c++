@@ -607,7 +607,8 @@ void WebSocket::send(jsg::Lock& js, kj::OneOf<kj::Array<byte>, kj::String> messa
   ensurePumping(js);
 }
 
-void WebSocket::close(jsg::Lock& js, jsg::Optional<int> code, jsg::Optional<kj::String> reason) {
+void WebSocket::close(
+    jsg::Lock& js, jsg::Optional<int> code, jsg::Optional<jsg::USVString> reason) {
   auto& native = *farNative;
 
   // Per the spec, close code and reason validation must happen before any readyState checks.
@@ -681,7 +682,7 @@ void WebSocket::close(jsg::Lock& js, jsg::Optional<int> code, jsg::Optional<kj::
     kj::WebSocket::Close{
       // Code 1005 actually translates to sending a close message with no body on the wire.
       static_cast<uint16_t>(code.orDefault(1005)),
-      kj::mv(reason).orDefault(nullptr),
+      kj::mv(reason).orDefault(jsg::USVString(kj::str())),
     },
     pendingAutoResponses});
 
