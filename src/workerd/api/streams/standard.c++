@@ -3127,6 +3127,9 @@ class AllReader {
         runningTotal -= UTF8_BOM_SIZE;
       }
 
+      JSG_REQUIRE(runningTotal <= v8::String::kMaxLength, RangeError,
+          "String length exceeds v8::String::kMaxLength.");
+
       auto out = kj::heapArray<char>(runningTotal + 1);
       copyInto(out.first(out.size() - 1).asBytes(), partPtrs.asPtr());
       out.back() = '\0';

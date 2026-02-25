@@ -509,3 +509,28 @@ export const testCancelPipethrough2 = {
     assert.strictEqual(result.value, undefined);
   },
 };
+
+export const ResponseTextLargeBody = {
+  async test() {
+    const targetSize = 2147483648 + 1024 * 1024;
+    let sent = 0;
+    const chunkSize = 64 * 1024 * 1024;
+
+    const stream = new ReadableStream({
+      pull(controller) {
+        if (sent >= targetSize) {
+          controller.close();
+          return;
+        }
+        const size = Math.min(chunkSize, targetSize - sent);
+        controller.enqueue(new Uint8Array(size).fill(0x41));
+        sent += size;
+      },
+    });
+
+    await assert.rejects(
+      new Response(stream).text(),
+      (e) => e instanceof RangeError
+    );
+  },
+};
