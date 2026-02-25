@@ -1410,4 +1410,13 @@ struct CompatibilityFlags @0x8f8c1b68151b6cef {
     $compatEnableDate("2026-03-03");
   # Enables the dedicated CJK TextDecoder implementation for overrides and
   # Big5 lead-byte handling instead of the legacy ICU-only path.
+
+  websocketCloseReasonByteLimit @164 :Bool
+      $compatEnableFlag("websocket_close_reason_byte_limit")
+      $compatDisableFlag("no_websocket_close_reason_byte_limit")
+      $compatEnableDate("2026-03-03");
+  # When enabled, WebSocket close() throws a SyntaxError DOMException if the
+  # reason string exceeds 123 bytes when UTF-8 encoded, as required by the
+  # WHATWG WebSocket spec and RFC 6455 Section 5.5. Previously, workerd allowed
+  # arbitrarily long close reasons without validation.
 }

@@ -55,11 +55,16 @@ export default {
     replace: removeUseCapture,
   },
   'Close-Reason-124Bytes.any.js': {
-    comment: 'workerd does not throw SYNTAX_ERR for reason > 123 bytes',
-    expectedFailures: [
-      "Create WebSocket - Close the Connection - close(code, 'reason more than 123 bytes') - SYNTAX_ERR is thrown",
-    ],
-    replace: removeUseCapture,
+    replace: (code: string): string => {
+      code = removeUseCapture(code);
+      // The test expects close(1000, longReason) to throw SYNTAX_ERR, leaving
+      // the WebSocket still open. Add a cleanup to close the WebSocket when the
+      // test completes so the connection is properly shut down.
+      return code.replace(
+        'var isOpenCalled = false;',
+        'var isOpenCalled = false;\ntest.add_cleanup(function() { wsocket.close(); });'
+      );
+    },
   },
   'Close-delayed.any.js': {
     replace: removeUseCapture,
