@@ -1420,4 +1420,10 @@ struct CompatibilityFlags @0x8f8c1b68151b6cef {
   # reason string exceeds 123 bytes when UTF-8 encoded, as required by the
   # WHATWG WebSocket spec and RFC 6455 Section 5.5. Previously, workerd allowed
   # arbitrarily long close reasons without validation.
+
+  enableVersionApi @165 :Bool
+    $compatEnableFlag("enable_version_api")
+    $experimental;
+  # Enables version-related APIs. This currently only enables the `version` option in loopback
+  # bindings to specify a requested version. The behaviour of this flag will change in the future.
 }
