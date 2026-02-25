@@ -348,8 +348,15 @@ kj::Maybe<jsg::JsString> IcuDecoder::decode(
       // is true the converter state will be cleared, and if the last code
       // unit is not a lead surrogate, we won't have to worry about possibly
       // splitting a valid surrogate pair.
-      auto ptr = reinterpret_cast<const char16_t*>(buffer.begin());
-      auto data = kj::ArrayPtr<const char16_t>(ptr, buffer.size() / 2);
+
+      // The input buffer may be at an odd byte offset (e.g. a Uint8Array view
+      // at offset 3 into an ArrayBuffer), which makes reinterpret_cast to
+      // char16_t* undefined behavior due to alignment violation. Copy into an
+      // aligned buffer to avoid this.
+      auto bufSize = buffer.size() / 2;
+      kj::SmallArray<char16_t, 256> aligned(bufSize);
+      aligned.asBytes().copyFrom(buffer.first(bufSize * 2));
+      auto data = aligned.asPtr();
 
       if (flush || !U_IS_SURROGATE_LEAD(data[data.size() - 1])) {
         bool omitInitialBom = false;

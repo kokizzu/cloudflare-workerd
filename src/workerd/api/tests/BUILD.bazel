@@ -765,3 +765,13 @@ wd_test(
     args = ["--experimental"],
     data = ["response-used-body-test.js"],
 )
+
+wd_test(
+    src = "buffer-indexof-odd-offset-ucs2-test.wd-test",
+    data = ["buffer-indexof-odd-offset-ucs2-test.js"],
+)
+
+wd_test(
+    src = "textdecoder-utf16-odd-offset-test.wd-test",
+    data = ["textdecoder-utf16-odd-offset-test.js"],
+)
