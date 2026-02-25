@@ -1,5 +1,3 @@
-# Async & Concurrency Patterns
-
 Promise lifetime management, background tasks, cancellation, and mutex usage in workerd.
 
 ---
