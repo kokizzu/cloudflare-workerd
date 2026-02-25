@@ -127,6 +127,12 @@ jobs:
       - name: Bazel build
         run: |
           bazel build --remote_cache=https://bazel:${{ secrets.BAZEL_CACHE_KEY }}@bazel-remote-cache.devprod.cloudflare.dev  --config=ci ${{ inputs.extra_bazel_args }} //...
+      - name: Configure Docker daemon for IPv6
+        if: inputs.build_container_images
+        run: |
+          sudo mkdir -p /etc/docker
+          echo '{"ipv6": true, "fixed-cidr-v6": "fd00::/80"}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
       - name: Build and load container images
         if: inputs.build_container_images
         run: |

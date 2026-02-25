@@ -701,8 +701,9 @@ kj::Promise<void> ContainerClient::startSidecarContainer() {
   auto endpoint = kj::str("/containers/", sidecarContainerName, "/start");
   auto response = co_await dockerApiRequest(
       network, kj::str(dockerPath), kj::HttpMethod::POST, kj::mv(endpoint), kj::str(""));
-  JSG_REQUIRE(
-      response.statusCode == 204 || response.statusCode == 304 || response.statusCode == 409, Error,
+  // statusCode 304 refers to "container already started"
+  // statusCode 204 refers to "request succeeded"
+  JSG_REQUIRE(response.statusCode == 204 || response.statusCode == 304, Error,
       "Starting network sidecar container failed with: ", response.statusCode, response.body);
 }
 
@@ -710,8 +711,13 @@ kj::Promise<void> ContainerClient::destroySidecarContainer() {
   auto endpoint = kj::str("/containers/", sidecarContainerName, "?force=true");
   auto responseDestroy = co_await dockerApiRequest(
       network, kj::str(dockerPath), kj::HttpMethod::DELETE, kj::mv(endpoint));
-  JSG_REQUIRE(responseDestroy.statusCode <= 499, Error,
-      "Destroying network sidecar container failed with: ", responseDestroy.statusCode,
+  // statusCode 204 refers to "no error"
+  // statusCode 404 refers to "no such container"
+  // statusCode 409 refers to "removal already in progress" (race between concurrent destroys)
+  // All of which are fine for us since we're tearing down the sidecar
+  JSG_REQUIRE(responseDestroy.statusCode == 204 || responseDestroy.statusCode == 404 ||
+          responseDestroy.statusCode == 409,
+      Error, "Destroying network sidecar container failed with: ", responseDestroy.statusCode,
       responseDestroy.body);
   auto response = co_await dockerApiRequest(network, kj::str(dockerPath), kj::HttpMethod::POST,
       kj::str("/containers/", sidecarContainerName, "/wait?condition=removed"));
