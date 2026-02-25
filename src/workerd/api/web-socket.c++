@@ -613,18 +613,22 @@ void WebSocket::close(
 
   // Per the spec, close code and reason validation must happen before any readyState checks.
   // See https://websockets.spec.whatwg.org/#dom-websocket-close step 1.
-  //
-  // The spec allows only 1000 (Normal Closure) or the range 3000-4999 (reserved for
-  // libraries/frameworks and private use, per RFC 6455 Section 7.4.2). We are more permissive
-  // here, accepting the full 1000-4999 range, but explicitly rejecting four codes that RFC 6455
-  // Section 7.4.1 reserves and forbids endpoints from sending in a Close frame:
-  //   1004 - Reserved (no defined meaning)
-  //   1005 - No Status Rcvd (only used internally to indicate no code was present)
-  //   1006 - Abnormal Closure (only used internally when connection drops without a Close frame)
-  //   1015 - TLS Handshake failure (only used internally, never sent over the wire)
   KJ_IF_SOME(c, code) {
-    JSG_REQUIRE(c >= 1000 && c < 5000 && c != 1004 && c != 1005 && c != 1006 && c != 1015,
-        DOMInvalidAccessError, "Invalid WebSocket close code: ", c, ".");
+    if (FeatureFlags::get(js).getPedanticWpt()) {
+      // The WHATWG WebSocket spec allows only 1000 (Normal Closure) or the range 3000-4999
+      // (reserved for libraries/frameworks and private use, per RFC 6455 Section 7.4.2).
+      JSG_REQUIRE(c == 1000 || (c >= 3000 && c <= 4999), DOMInvalidAccessError,
+          "Invalid WebSocket close code: ", c, ".");
+    } else {
+      // Legacy behavior: accept the full 1000-4999 range, only rejecting four codes that
+      // RFC 6455 Section 7.4.1 reserves and forbids endpoints from sending in a Close frame:
+      //   1004 - Reserved (no defined meaning)
+      //   1005 - No Status Rcvd (only used internally to indicate no code was present)
+      //   1006 - Abnormal Closure (only used internally when connection drops without a Close frame)
+      //   1015 - TLS Handshake failure (only used internally, never sent over the wire)
+      JSG_REQUIRE(c >= 1000 && c < 5000 && c != 1004 && c != 1005 && c != 1006 && c != 1015,
+          DOMInvalidAccessError, "Invalid WebSocket close code: ", c, ".");
+    }
   }
 
   // Per the WHATWG WebSocket spec and RFC 6455 Section 5.5, the close frame body must not exceed
