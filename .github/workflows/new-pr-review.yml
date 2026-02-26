@@ -21,13 +21,15 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          fetch-depth: 30 # Fetch some history; not all of it
 
       - name: Load review prompt
         id: prompt
         run: |
           {
             echo 'value<<EOF'
+            echo "You are reviewing PR #${{ github.event.pull_request.number }} on ${{ github.repository }}."
+            echo ""
             cat .github/bonk_reviewer.md
             echo EOF
           } >> "$GITHUB_OUTPUT"
