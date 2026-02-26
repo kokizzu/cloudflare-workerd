@@ -249,7 +249,8 @@ void reportStartupError(kj::StringPtr id,
     v8::TryCatch& catcher,
     kj::Maybe<Worker::ValidationErrorReporter&> errorReporter,
     kj::Maybe<kj::Exception>& permanentException,
-    SpanParent parentSpan) {
+    SpanParent parentSpan,
+    bool isDynamicWorker) {
   v8::TryCatch catcher2(js.v8Isolate);
   ExceptionOrDuration limitErrorOrTime2 = 0 * kj::NANOSECONDS;
   try {
@@ -299,6 +300,7 @@ void reportStartupError(kj::StringPtr id,
               // won't be able to connect and the developer will never know what happened.
             } else {
               // We should never get here in production if we've validated scripts before deployment.
+              // (unless this is a dynamic worker)
               kj::Vector<kj::String> lines;
               jsg::JsMessage message(catcher.Message());
               message.addJsStackTrace(js, lines);
@@ -310,7 +312,12 @@ void reportStartupError(kj::StringPtr id,
                   kj::ConstString(
                       kj::str("script startup threw exception", id, description, trace)));
               KJ_LOG(ERROR, "script startup threw exception", id, description, trace);
-              KJ_FAIL_REQUIRE("script startup threw exception");
+              if (isDynamicWorker) {
+                // Rethrow the tunneled JSG exception so it converts back to a JS Error.
+                kj::throwFatalException(kj::cp(KJ_ASSERT_NONNULL(permanentException)));
+              } else {
+                KJ_FAIL_REQUIRE("script startup threw exception");
+              }
             }
           });
         } else {
@@ -1494,7 +1501,7 @@ Worker::Script::Script(kj::Own<const Isolate> isolateParam,
         } catch (const jsg::JsExceptionThrown&) {
           reportStartupError(id, lock, isolate->impl->inspector, isolate->getLimitEnforcer(),
               kj::mv(limitErrorOrTime), catcher, errorReporter, impl->permanentException,
-              parentSpan.addRef());
+              parentSpan.addRef(), dynamicEnvBuilder != kj::none);
         }
       });
     });
@@ -1929,7 +1936,7 @@ Worker::Worker(kj::Own<const Script> scriptParam,
         } catch (const jsg::JsExceptionThrown&) {
           reportStartupError(script->id, lock, script->isolate->impl->inspector,
               script->isolate->getLimitEnforcer(), kj::mv(limitErrorOrTime), catcher, errorReporter,
-              impl->permanentException, currentSpan);
+              impl->permanentException, currentSpan, script->getDynamicEnvBuilder() != kj::none);
         }
       });
 
