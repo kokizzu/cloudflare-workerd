@@ -81,7 +81,6 @@ class FooStream: public ReadableStreamSource {
     numreads_++;
     if (remaining_ == 0) return static_cast<size_t>(0);
     KJ_ASSERT(minBytes == maxBytes);
-    KJ_ASSERT(maxBytes <= size);
     auto amount = kj::min(remaining_, maxBytes);
     memcpy(buffer, ptr, amount);
     ptr += amount;
@@ -125,8 +124,9 @@ KJ_TEST("test") {
   kj::EventLoop loop;
   kj::WaitScope waitScope(loop);
 
-  // In this first case, the stream does not report a length. The maximum
-  // number of reads should be 3, and each allocation should be 4096
+  // In this first case, the stream does not report a length. The read size
+  // is min(limit, DEFAULT_BUFFER_CHUNK) = min(10001, 131072) = 10001, so the
+  // entire stream is consumed in a single read that returns a short read (10000 < 10001).
   FooStream<10000> stream;
 
   stream.readAllBytes(10001)
@@ -135,16 +135,17 @@ KJ_TEST("test") {
     KJ_ASSERT(bytes == stream.buf().first(10000));
   }).wait(waitScope);
 
-  KJ_ASSERT(stream.numreads() == 3);
-  KJ_ASSERT(stream.maxMaxBytesSeen() == 4096);
+  KJ_ASSERT(stream.numreads() == 1);
+  KJ_ASSERT(stream.maxMaxBytesSeen() == 10001);
 }
 
 KJ_TEST("test (text)") {
   kj::EventLoop loop;
   kj::WaitScope waitScope(loop);
 
-  // In this first case, the stream does not report a length. The maximum
-  // number of reads should be 3, and each allocation should be 4096
+  // In this first case, the stream does not report a length. The read size
+  // is min(limit, DEFAULT_BUFFER_CHUNK) = min(10001, 131072) = 10001, so the
+  // entire stream is consumed in a single read that returns a short read (10000 < 10001).
   FooStream<10000> stream;
 
   stream.readAllText(10001)
@@ -153,8 +154,8 @@ KJ_TEST("test (text)") {
     KJ_ASSERT(bytes.asBytes() == stream.buf().first(10000));
   }).wait(waitScope);
 
-  KJ_ASSERT(stream.numreads() == 3);
-  KJ_ASSERT(stream.maxMaxBytesSeen() == 4096);
+  KJ_ASSERT(stream.numreads() == 1);
+  KJ_ASSERT(stream.maxMaxBytesSeen() == 10001);
 }
 
 KJ_TEST("test2") {
