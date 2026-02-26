@@ -146,6 +146,7 @@ class ContainerClient final: public rpc::Container::Server, public kj::Refcounte
 
   std::atomic_bool containerStarted = false;
   std::atomic_bool containerSidecarStarted = false;
+  std::atomic_bool egressListenerStarted = false;
 
   kj::Maybe<kj::Own<kj::HttpServer>> egressHttpServer;
   kj::Maybe<kj::Promise<void>> egressListenerTask;
@@ -160,6 +161,9 @@ class ContainerClient final: public rpc::Container::Server, public kj::Refcounte
   // Start the egress listener on the given address with an OS-chosen port.
   kj::Promise<uint16_t> startEgressListener(kj::String listenAddress);
   void stopEgressListener();
+  // Ensure the egress listener is started exactly once.
+  // Uses egressListenerStarted as a guard. Called from setEgressHttp().
+  kj::Promise<void> ensureEgressListenerStarted();
   // Ensure the egress listener and sidecar container are started exactly once.
   // Uses containerSidecarStarted as a guard. Called from both start() and setEgressHttp().
   kj::Promise<void> ensureSidecarStarted();

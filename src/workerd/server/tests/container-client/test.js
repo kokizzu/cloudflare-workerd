@@ -394,7 +394,10 @@ export class DurableObjectExample extends DurableObject {
           headers: { 'x-host': '1.2.3.4:80' },
         });
       assert.equal(response.status, 200);
-      assert.equal(await response.text(), 'hello binding: 1234');
+      assert.equal(
+        await response.text(),
+        'hello binding: 1234 http://1.2.3.4/'
+      );
     }
 
     {
@@ -404,7 +407,10 @@ export class DurableObjectExample extends DurableObject {
           headers: { 'x-host': '11.0.0.1:9999' },
         });
       assert.equal(response.status, 200);
-      assert.equal(await response.text(), 'hello binding: 1');
+      assert.equal(
+        await response.text(),
+        'hello binding: 1 http://11.0.0.1:9999/'
+      );
     }
 
     {
@@ -414,7 +420,10 @@ export class DurableObjectExample extends DurableObject {
           headers: { 'x-host': '11.0.0.2:9999' },
         });
       assert.equal(response.status, 200);
-      assert.equal(await response.text(), 'hello binding: 2');
+      assert.equal(
+        await response.text(),
+        'hello binding: 2 http://11.0.0.2:9999/'
+      );
     }
 
     {
@@ -424,7 +433,7 @@ export class DurableObjectExample extends DurableObject {
           headers: { 'x-host': '15.0.0.2:80' },
         });
       assert.equal(response.status, 200);
-      assert.equal(await response.text(), 'hello binding: 3');
+      assert.equal(await response.text(), 'hello binding: 3 http://15.0.0.2/');
     }
 
     {
@@ -434,7 +443,20 @@ export class DurableObjectExample extends DurableObject {
           headers: { 'x-host': '[111::]:80' },
         });
       assert.equal(response.status, 200);
-      assert.equal(await response.text(), 'hello binding: 3');
+      assert.equal(await response.text(), 'hello binding: 3 http://[111::]/');
+    }
+
+    {
+      const response = await container
+        .getTcpPort(8080)
+        .fetch('http://foo/intercept', {
+          headers: { 'x-host': 'google.com/hello/world' },
+        });
+      assert.equal(response.status, 200);
+      assert.equal(
+        await response.text(),
+        'hello binding: 3 http://google.com/hello/world'
+      );
     }
   }
 
@@ -531,7 +553,9 @@ export class TestService extends WorkerEntrypoint {
     }
 
     // Regular HTTP request
-    return new Response('hello binding: ' + this.ctx.props.id);
+    return new Response(
+      'hello binding: ' + this.ctx.props.id + ' ' + request.url
+    );
   }
 }
 
