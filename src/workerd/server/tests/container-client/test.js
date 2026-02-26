@@ -2,6 +2,21 @@ import { DurableObject, WorkerEntrypoint } from 'cloudflare:workers';
 import assert from 'node:assert';
 import { scheduler } from 'node:timers/promises';
 
+// 10s timeout for some of the requests going to the container.
+// Avoids unknown flakiness, and we get to have a stack trace with an
+// abort signal.
+const DEFAULT_TIMEOUT_DURATION = 10_000;
+
+// **IMPORTANT NOTE**
+//
+// When writing a test, don't forget to call waitUntilContainerIsHealthy
+// before testing the behaviour with your container.
+//
+// Don't forget to call monitor() after calling start(), as there
+// is an issue with not calling monitor() in Durable Objects where
+// we might lose track of the container lifetime.
+//
+
 export class DurableObjectExample extends DurableObject {
   async testExitCode() {
     const container = this.ctx.container;
@@ -62,39 +77,8 @@ export class DurableObjectExample extends DurableObject {
 
     const monitor = container.monitor().catch((_err) => {});
 
-    // Test HTTP requests to container
-    {
-      let resp;
-      // The retry count here is arbitrary. Can increase it if necessary.
-      const maxRetries = 15;
-      for (let i = 1; i <= maxRetries; i++) {
-        try {
-          resp = await container
-            .getTcpPort(8080)
-            .fetch('http://foo/bar/baz', { method: 'POST', body: 'hello' });
-          break;
-        } catch (e) {
-          if (!e.message.includes('container port not found')) {
-            throw e;
-          }
-          console.info(
-            `Retrying getTcpPort(8080) for the ${i} time due to an error ${e.message}`
-          );
-          console.info(e);
-          if (i === maxRetries) {
-            console.error(
-              `Failed to connect to container ${container.id}. Retried ${i} times`
-            );
-            throw e;
-          }
-          await scheduler.wait(500);
-        }
-      }
+    await this.waitUntilContainerIsHealthy();
 
-      assert.equal(resp.status, 200);
-      assert.equal(resp.statusText, 'OK');
-      assert.strictEqual(await resp.text(), 'Hello World!');
-    }
     await container.destroy();
     await monitor;
     assert.strictEqual(container.running, false);
@@ -194,38 +178,17 @@ export class DurableObjectExample extends DurableObject {
       });
     }
 
-    // Wait for container to be ready with retry loop
-    let res;
-    // The retry count here is arbitrary. Can increase it if necessary.
-    const maxRetries = 6;
-    for (let i = 1; i <= maxRetries; i++) {
-      try {
-        res = await container.getTcpPort(8080).fetch('http://foo/ws', {
-          headers: {
-            Upgrade: 'websocket',
-            Connection: 'Upgrade',
-            'Sec-WebSocket-Key': 'x3JJHMbDL1EzLkh9GBhXDw==',
-            'Sec-WebSocket-Version': '13',
-          },
-        });
-        break;
-      } catch (e) {
-        if (!e.message.includes('container port not found')) {
-          throw e;
-        }
-        console.info(
-          `Retrying getTcpPort(8080) for the ${i} time due to an error ${e.message}`
-        );
-        console.info(e);
-        if (i === maxRetries) {
-          console.error(
-            `Failed to connect to container for WebSocket ${container.id}. Retried ${i} times`
-          );
-          throw e;
-        }
-        await scheduler.wait(1000);
-      }
-    }
+    await this.waitUntilContainerIsHealthy();
+
+    const res = await container.getTcpPort(8080).fetch('http://foo/ws', {
+      headers: {
+        Upgrade: 'websocket',
+        Connection: 'Upgrade',
+        'Sec-WebSocket-Key': 'x3JJHMbDL1EzLkh9GBhXDw==',
+        'Sec-WebSocket-Version': '13',
+      },
+      abort: AbortSignal.timeout(DEFAULT_TIMEOUT_DURATION),
+    });
 
     // Should get WebSocket upgrade response
     assert.strictEqual(res.status, 101);
@@ -260,7 +223,7 @@ export class DurableObjectExample extends DurableObject {
     return this.ctx.container.running;
   }
 
-  async ping() {
+  async waitUntilContainerIsHealthy() {
     const container = this.ctx.container;
     {
       let resp;
@@ -268,14 +231,22 @@ export class DurableObjectExample extends DurableObject {
       const maxRetries = 15;
       for (let i = 1; i <= maxRetries; i++) {
         try {
-          resp = await container
-            .getTcpPort(8080)
-            .fetch('http://foo/bar/baz', { method: 'POST', body: 'hello' });
+          resp = await container.getTcpPort(8080).fetch('http://foo/bar/baz', {
+            method: 'POST',
+            body: 'hello',
+            abort: AbortSignal.timeout(DEFAULT_TIMEOUT_DURATION),
+          });
           break;
         } catch (e) {
           if (!e.message.includes('container port not found')) {
+            console.error(
+              'Error querying getTcpPort().fetch() that is not related to container port not found',
+              e.message
+            );
+
             throw e;
           }
+
           console.info(
             `Retrying getTcpPort(8080) for the ${i} time due to an error ${e.message}`
           );
@@ -311,31 +282,13 @@ export class DurableObjectExample extends DurableObject {
     });
 
     const monitor = container.monitor().catch((_err) => {});
-    // Fetch the /pid-namespace endpoint which returns info about the PID namespace
-    let resp;
-    const maxRetries = 6;
-    for (let i = 1; i <= maxRetries; i++) {
-      try {
-        resp = await container
-          .getTcpPort(8080)
-          .fetch('http://foo/pid-namespace');
-        break;
-      } catch (e) {
-        if (!e.message.includes('container port not found')) {
-          throw e;
-        }
-        console.info(
-          `Retrying getTcpPort(8080) for the ${i} time due to an error ${e.message}`
-        );
-        if (i === maxRetries) {
-          console.error(
-            `Failed to connect to container ${container.id}. Retried ${i} times`
-          );
-          throw e;
-        }
-        await scheduler.wait(500);
-      }
-    }
+    await this.waitUntilContainerIsHealthy();
+
+    const resp = await container
+      .getTcpPort(8080)
+      .fetch('http://foo/pid-namespace', {
+        abort: AbortSignal.timeout(DEFAULT_TIMEOUT_DURATION),
+      });
 
     assert.equal(resp.status, 200);
     const data = await resp.json();
@@ -368,7 +321,7 @@ export class DurableObjectExample extends DurableObject {
     });
 
     // wait for container to be available
-    await this.ping();
+    await this.waitUntilContainerIsHealthy();
 
     // Set up egress TCP mapping to route requests to the binding
     // This registers the binding's channel token with the container runtime
@@ -392,6 +345,7 @@ export class DurableObjectExample extends DurableObject {
         .getTcpPort(8080)
         .fetch('http://foo/intercept', {
           headers: { 'x-host': '1.2.3.4:80' },
+          abort: AbortSignal.timeout(DEFAULT_TIMEOUT_DURATION),
         });
       assert.equal(response.status, 200);
       assert.equal(
@@ -405,6 +359,7 @@ export class DurableObjectExample extends DurableObject {
         .getTcpPort(8080)
         .fetch('http://foo/intercept', {
           headers: { 'x-host': '11.0.0.1:9999' },
+          abort: AbortSignal.timeout(DEFAULT_TIMEOUT_DURATION),
         });
       assert.equal(response.status, 200);
       assert.equal(
@@ -418,6 +373,7 @@ export class DurableObjectExample extends DurableObject {
         .getTcpPort(8080)
         .fetch('http://foo/intercept', {
           headers: { 'x-host': '11.0.0.2:9999' },
+          abort: AbortSignal.timeout(DEFAULT_TIMEOUT_DURATION),
         });
       assert.equal(response.status, 200);
       assert.equal(
@@ -431,6 +387,7 @@ export class DurableObjectExample extends DurableObject {
         .getTcpPort(8080)
         .fetch('http://foo/intercept', {
           headers: { 'x-host': '15.0.0.2:80' },
+          abort: AbortSignal.timeout(DEFAULT_TIMEOUT_DURATION),
         });
       assert.equal(response.status, 200);
       assert.equal(await response.text(), 'hello binding: 3 http://15.0.0.2/');
@@ -441,6 +398,7 @@ export class DurableObjectExample extends DurableObject {
         .getTcpPort(8080)
         .fetch('http://foo/intercept', {
           headers: { 'x-host': '[111::]:80' },
+          abort: AbortSignal.timeout(DEFAULT_TIMEOUT_DURATION),
         });
       assert.equal(response.status, 200);
       assert.equal(await response.text(), 'hello binding: 3 http://[111::]/');
@@ -451,6 +409,7 @@ export class DurableObjectExample extends DurableObject {
         .getTcpPort(8080)
         .fetch('http://foo/intercept', {
           headers: { 'x-host': 'google.com/hello/world' },
+          abort: AbortSignal.timeout(DEFAULT_TIMEOUT_DURATION),
         });
       assert.equal(response.status, 200);
       assert.equal(
@@ -474,9 +433,12 @@ export class DurableObjectExample extends DurableObject {
     container.start({
       env: { WS_ENABLED: 'true', WS_PROXY_TARGET: '11.0.0.1:9999' },
     });
+    container.monitor().finally(() => {
+      console.log('Container exited');
+    });
 
     // Wait for container to be available
-    await this.ping();
+    await this.waitUntilContainerIsHealthy();
 
     assert.strictEqual(container.running, true);
 
@@ -496,6 +458,7 @@ export class DurableObjectExample extends DurableObject {
         'Sec-WebSocket-Key': 'x3JJHMbDL1EzLkh9GBhXDw==',
         'Sec-WebSocket-Version': '13',
       },
+      abort: AbortSignal.timeout(DEFAULT_TIMEOUT_DURATION),
     });
 
     // Should get WebSocket upgrade response
