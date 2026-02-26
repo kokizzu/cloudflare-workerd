@@ -114,13 +114,21 @@ class AllReader final {
     // we've seen so far is equal to or greater than the expected total length of the stream,
     // then the most likely case is that the next read will be zero-length -- but unfortunately
     // we can't know for sure! So for this we will fall back to a more conservative allocation
-    // which is either 4096 bytes or the calculated amountToRead, whichever is the lower number.
+    // which is either MIN_BUFFER_CHUNK or the calculated amountToRead, whichever is the lower
+    // number.
+    //
+    // The chunk sizes here are intentionally large to avoid pathological allocation patterns
+    // when reading from tee'd streams. The KJ tee buffers data in 16KB chunks; if we read
+    // with smaller buffers, each partial consume of a tee chunk allocates a new heap array
+    // for the remainder. With many green threads contending on tcmalloc, the cumulative
+    // allocation overhead can exceed watchdog timeouts. Using 128KB default reads ensures
+    // tee chunks are consumed whole, eliminating the amplification entirely.
 
     kj::Vector<kj::Array<T>> parts;
     uint64_t runningTotal = 0;
-    static constexpr uint64_t MIN_BUFFER_CHUNK = 1024;
-    static constexpr uint64_t DEFAULT_BUFFER_CHUNK = 4096;
-    static constexpr uint64_t MAX_BUFFER_CHUNK = DEFAULT_BUFFER_CHUNK * 4;
+    static constexpr uint64_t MIN_BUFFER_CHUNK = 65536;                     // 64KB
+    static constexpr uint64_t DEFAULT_BUFFER_CHUNK = 131072;                // 128KB
+    static constexpr uint64_t MAX_BUFFER_CHUNK = DEFAULT_BUFFER_CHUNK * 4;  // 512KB
 
     // If we know in advance how much data we'll be reading, then we can attempt to
     // optimize the loop here by setting the value specifically so we are only
