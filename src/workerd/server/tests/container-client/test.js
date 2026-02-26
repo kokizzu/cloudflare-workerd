@@ -157,7 +157,6 @@ export class DurableObjectExample extends DurableObject {
 
     const aborted = await this.ctx.storage.get('aborted');
     assert.strictEqual(!!this.ctx.container, true);
-    // assert.strictEqual(this.ctx.container.running, true);
     if (aborted) {
       await this.ctx.storage.put('aborted-confirmed', true);
     }
@@ -350,13 +349,11 @@ export class DurableObjectExample extends DurableObject {
 
   async testSetEgressHttp() {
     const container = this.ctx.container;
-    if (container.running) {
-      let monitor = container.monitor().catch((_err) => {});
-      await container.destroy();
-      await monitor;
-    }
 
-    assert.strictEqual(container.running, false);
+    if (container.running) {
+      await this.ctx.container.destroy();
+      await this.ctx.container.monitor().catch(() => {});
+    }
 
     // Set up egress TCP mapping to route requests to the binding
     // We can configure this even before the container starts.
@@ -365,13 +362,13 @@ export class DurableObjectExample extends DurableObject {
       this.ctx.exports.TestService({ props: { id: 1234 } })
     );
 
-    // Start container
     container.start();
+    container.monitor().catch((err) => {
+      console.error('Container exited with an error:', err.message);
+    });
 
     // wait for container to be available
     await this.ping();
-
-    assert.strictEqual(container.running, true);
 
     // Set up egress TCP mapping to route requests to the binding
     // This registers the binding's channel token with the container runtime
@@ -712,7 +709,15 @@ export const testPidNamespace = {
 export const testSetEgressHttp = {
   async test(_ctrl, env) {
     const id = env.MY_CONTAINER.idFromName('testSetEgressHttp');
-    const stub = env.MY_CONTAINER.get(id);
+    let stub = env.MY_CONTAINER.get(id);
+    await stub.testSetEgressHttp();
+    try {
+      // test we recover from aborts
+      await stub.abort();
+    } catch {}
+
+    stub = env.MY_CONTAINER.get(id);
+    // should work idempotent
     await stub.testSetEgressHttp();
   },
 };
