@@ -271,7 +271,14 @@ jsg::Ref<PerformanceMeasure> Performance::measure(jsg::Lock& js,
 }
 
 void Performance::setResourceTimingBufferSize(uint32_t size) {
-  JSG_FAIL_REQUIRE(Error, "Performance.setResourceTimingBufferSize is not implemented");
+  // No-op stub for compatibility. Resource timing is not applicable in the Workers context,
+  // but we avoid throwing so that isomorphic code calling this defensively does not break.
+}
+
+jsg::JsObject Performance::toJSON(jsg::Lock& js) {
+  auto obj = js.objNoProto();
+  obj.set(js, "timeOrigin"_kj, js.num(getTimeOrigin()));
+  return kj::mv(obj);
 }
 
 jsg::Ref<PerformanceObserver> PerformanceObserver::constructor(jsg::Lock& js, Callback callback) {

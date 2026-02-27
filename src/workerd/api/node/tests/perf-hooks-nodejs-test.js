@@ -15,6 +15,7 @@ import {
 } from 'node:perf_hooks';
 import {
   deepStrictEqual,
+  doesNotThrow,
   ok,
   throws,
   strictEqual,
@@ -807,6 +808,22 @@ export const testPerformanceMeasureToJSON = {
     });
     const json2 = measure2.toJSON();
     deepStrictEqual(json2.detail, customDetail);
+  },
+};
+
+export const testPerformanceToJSON = {
+  test() {
+    const json = perfHooksPerformance.toJSON();
+    strictEqual(typeof json, 'object');
+    strictEqual(json.timeOrigin, 0);
+    // toJSON should not include other properties beyond timeOrigin
+    deepStrictEqual(Object.keys(json), ['timeOrigin']);
+  },
+};
+
+export const testSetResourceTimingBufferSize = {
+  test() {
+    doesNotThrow(() => perfHooksPerformance.setResourceTimingBufferSize(0));
   },
 };
 
