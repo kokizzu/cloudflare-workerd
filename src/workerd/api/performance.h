@@ -67,6 +67,10 @@ class PerformanceEntry: public jsg::Object {
     JSG_READONLY_PROTOTYPE_PROPERTY(startTime, getStartTime);
     JSG_READONLY_PROTOTYPE_PROPERTY(duration, getDuration);
     JSG_METHOD(toJSON);
+
+    JSG_TS_OVERRIDE({
+      toJSON(): object;
+    });
   }
 
  protected:
@@ -108,6 +112,10 @@ class PerformanceMark: public PerformanceEntry {
     JSG_INHERIT(PerformanceEntry);
     JSG_READONLY_PROTOTYPE_PROPERTY(detail, getDetail);
     JSG_METHOD(toJSON);
+
+    JSG_TS_OVERRIDE({
+      toJSON(): object;
+    });
   }
 
  private:
@@ -187,6 +195,10 @@ class PerformanceNodeTiming: public PerformanceEntry {
     JSG_READONLY_INSTANCE_PROPERTY(idleTime, getIdleTime);
     JSG_READONLY_INSTANCE_PROPERTY(uvMetricsInfo, getUvMetricsInfo);
     JSG_METHOD(toJSON);
+
+    JSG_TS_OVERRIDE({
+      toJSON(): object;
+    });
   }
 };
 
@@ -229,6 +241,10 @@ class PerformanceMeasure: public PerformanceEntry {
     JSG_INHERIT(PerformanceEntry);
     JSG_READONLY_PROTOTYPE_PROPERTY(detail, getDetail);
     JSG_METHOD(toJSON);
+
+    JSG_TS_OVERRIDE({
+      toJSON(): object;
+    });
   }
 
  private:
@@ -594,6 +610,10 @@ class Performance: public EventTarget {
       JSG_METHOD(markResourceTiming);
       JSG_METHOD(timerify);
     }
+
+    JSG_TS_OVERRIDE({
+      toJSON(): object;
+    });
   }
 
  private:
