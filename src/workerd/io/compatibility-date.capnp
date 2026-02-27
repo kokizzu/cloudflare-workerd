@@ -1067,7 +1067,8 @@ struct CompatibilityFlags @0x8f8c1b68151b6cef {
      $experimental;
      # $impliedByAfterDate(name = "nodeJsCompat", date = "2025-10-01");
    # Enables the Node.js perf_hooks module. It is required to use this flag with
-   # nodejs_compat (or nodejs_compat_v2).
+   # nodejs_compat (or nodejs_compat_v2). This flag also implicitly enables the
+   # global Performance classes (PerformanceEntry, PerformanceMark, etc.).
 
   enableGlobalPerformanceClasses @123 :Bool
      $compatEnableFlag("enable_global_performance_classes")
@@ -1075,6 +1076,7 @@ struct CompatibilityFlags @0x8f8c1b68151b6cef {
      $experimental;
    # Enables PerformanceEntry, PerformanceMark, PerformanceMeasure, PerformanceResourceTiming,
    # PerformanceObserver and PerformanceObserverEntryList global classes.
+   # These are also implicitly enabled by enableNodeJsPerfHooksModule.
 
   enableNodeJsDomainModule @124 :Bool
     $compatEnableFlag("enable_nodejs_domain_module")
