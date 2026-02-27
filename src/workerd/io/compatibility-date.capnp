@@ -1071,7 +1071,7 @@ struct CompatibilityFlags @0x8f8c1b68151b6cef {
   enableGlobalPerformanceClasses @123 :Bool
      $compatEnableFlag("enable_global_performance_classes")
      $compatDisableFlag("disable_global_performance_classes")
-     $impliedByAfterDate(name = "enableNodeJsPerfHooksModule", date = "2026-03-10");
+     $impliedByAfterDate(name = "nodeJsCompat", date = "2026-03-10");
    # Enables PerformanceEntry, PerformanceMark, PerformanceMeasure, PerformanceResourceTiming,
    # PerformanceObserver and PerformanceObserverEntryList global classes.
 
