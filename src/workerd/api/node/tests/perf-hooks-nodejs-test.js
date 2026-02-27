@@ -15,6 +15,7 @@ import {
 } from 'node:perf_hooks';
 import {
   deepStrictEqual,
+  doesNotThrow,
   ok,
   throws,
   strictEqual,
