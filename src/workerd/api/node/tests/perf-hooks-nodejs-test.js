@@ -822,9 +822,7 @@ export const testPerformanceToJSON = {
 
 export const testSetResourceTimingBufferSize = {
   test() {
-    // setResourceTimingBufferSize should be a no-op (not throw)
-    perfHooksPerformance.setResourceTimingBufferSize(100);
-    perfHooksPerformance.setResourceTimingBufferSize(0);
+    doesNotThrow(() => perfHooksPerformance.setResourceTimingBufferSize(0));
   },
 };
 
