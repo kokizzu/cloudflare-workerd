@@ -53,6 +53,11 @@ void LegacyDecoder::reset() {
 
 kj::Maybe<jsg::JsString> LegacyDecoder::decode(
     jsg::Lock& js, kj::ArrayPtr<const kj::byte> buffer, bool flush) {
+  if (!flush && buffer.size() == 0) {
+    // Avoid encoding_rs empty-chunk streaming bug:
+    // https://github.com/hsivonen/encoding_rs/issues/126#issuecomment-3677642122
+    return js.str();
+  }
   // Reset decoder state after flush, matching IcuDecoder's KJ_DEFER contract.
   // This ensures decodePtr() (used by TextDecoderStream) resets correctly on flush.
   KJ_DEFER({
