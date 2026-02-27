@@ -330,7 +330,6 @@ DEFINE_TYPED_ARRAY_UNWRAP(biguint64_array, BigUint64Array, uint64_t)
   };
 
   ::rust::Vec<Global> result;
-  result.reserve(arr->Length());
   Data data{isolate, &result};
 
   auto iterateResult = arr->Iterate(context,
