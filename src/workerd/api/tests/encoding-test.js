@@ -154,6 +154,23 @@ export const decodeStreamingTest = {
       decodeStreaming(fatalIgnoreBomDecoder, bomBom) === '\ufeff\ufeff',
       'first BOM not to be stripped by TextDecoder with ignoreBOM set'
     );
+
+    const shiftJisDecoder = new TextDecoder('shift_jis');
+    let shiftJisResult = '';
+    shiftJisResult += shiftJisDecoder.decode(new Uint8Array([0x82]), {
+      stream: true,
+    });
+    shiftJisResult += shiftJisDecoder.decode(new Uint8Array(), {
+      stream: true,
+    });
+    shiftJisResult += shiftJisDecoder.decode(new Uint8Array([0xa0]), {
+      stream: true,
+    });
+    shiftJisResult += shiftJisDecoder.decode();
+    ok(
+      shiftJisResult === 'あ',
+      'streaming Shift_JIS should tolerate empty chunks without flushing state'
+    );
   },
 };
 
