@@ -7,15 +7,16 @@ from pyodide.ffi import create_once_callable
 
 
 def test_import_from_javascript():
-    # Import the env module from cloudflare:workers
-    env_module = import_from_javascript("cloudflare:workers")
+    # Import the workers module from cloudflare:workers
+    workers_module = import_from_javascript("cloudflare:workers")
 
     # Test that we can access the imported module's exports
-    assert hasattr(env_module, "env"), "env property should exist"
-    assert hasattr(env_module, "withEnv"), "withEnv function should exist"
+    assert hasattr(workers_module, "env"), "env property should exist"
+    assert hasattr(workers_module, "withEnv"), "withEnv function should exist"
+    assert hasattr(workers_module, "waitUntil"), "waitUntil function should exist"
 
     # Test with actual env values
-    assert env_module.env.TEST_VALUE == "TEST_STRING", (
+    assert workers_module.env.TEST_VALUE == "TEST_STRING", (
         "TEST_VALUE should be correctly set"
     )
 
