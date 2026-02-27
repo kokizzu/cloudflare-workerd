@@ -4251,6 +4251,12 @@ export declare abstract class Performance extends EventTarget {
    * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Performance/setResourceTimingBufferSize)
    */
   setResourceTimingBufferSize(size: number): void;
+  /**
+   * The **`toJSON()`** method of the Performance interface is a Serialization; it returns a JSON representation of the Performance object.
+   *
+   * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Performance/toJSON)
+   */
+  toJSON(): any;
   get nodeTiming(): PerformanceNodeTiming;
   eventLoopUtilization(): PerformanceEventLoopUtilization;
   markResourceTiming(): void;
