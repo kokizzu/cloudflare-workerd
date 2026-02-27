@@ -810,6 +810,24 @@ export const testPerformanceMeasureToJSON = {
   },
 };
 
+export const testPerformanceToJSON = {
+  test() {
+    const json = perfHooksPerformance.toJSON();
+    strictEqual(typeof json, 'object');
+    strictEqual(json.timeOrigin, 0);
+    // toJSON should not include other properties beyond timeOrigin
+    deepStrictEqual(Object.keys(json), ['timeOrigin']);
+  },
+};
+
+export const testSetResourceTimingBufferSize = {
+  test() {
+    // setResourceTimingBufferSize should be a no-op (not throw)
+    perfHooksPerformance.setResourceTimingBufferSize(100);
+    perfHooksPerformance.setResourceTimingBufferSize(0);
+  },
+};
+
 export const testGlobalThis = {
   async test() {
     notStrictEqual(typeof globalThis.performance, 'undefined');

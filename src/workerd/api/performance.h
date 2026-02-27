@@ -538,6 +538,8 @@ class Performance: public EventTarget {
 
   void setResourceTimingBufferSize(uint32_t size);
 
+  jsg::JsObject toJSON(jsg::Lock& js);
+
   // Node.js-specific performance extensions.
   // These are provided as stubs for compatibility with code that expects Node.js APIs.
 
@@ -583,6 +585,7 @@ class Performance: public EventTarget {
       JSG_METHOD(mark);
       JSG_METHOD(measure);
       JSG_METHOD(setResourceTimingBufferSize);
+      JSG_METHOD(toJSON);
     }
 
     if (flags.getEnableNodeJsPerfHooksModule()) {
