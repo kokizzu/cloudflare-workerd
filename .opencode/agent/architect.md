@@ -16,6 +16,8 @@ permission:
     'git branch*': allow
     'git rev-parse*': allow
     'git merge-base*': allow
+    'git config user.name': allow
+    'git config user.email': allow
     'bazel query*': allow
     'bazel cquery*': allow
     'bazel aquery*': allow
