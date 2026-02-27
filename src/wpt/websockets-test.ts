@@ -39,11 +39,16 @@ export default {
     },
   },
   'Close-2999-reason.any.js': {
-    comment: 'workerd does not throw INVALID_ACCESS_ERR for close(2999)',
-    expectedFailures: [
-      'Create WebSocket - Close the Connection - close(2999, reason) - INVALID_ACCESS_ERR is thrown',
-    ],
-    replace: removeUseCapture,
+    replace: (code: string): string => {
+      code = removeUseCapture(code);
+      // The test expects close(2999) to throw, leaving the WebSocket open.
+      // Add a cleanup to close the WebSocket when the test completes so the
+      // connection is properly shut down.
+      return code.replace(
+        'var wsocket = CreateWebSocket(false, false);',
+        'var wsocket = CreateWebSocket(false, false);\ntest.add_cleanup(function() { wsocket.close(); });'
+      );
+    },
   },
   'Close-3000-reason.any.js': {
     replace: removeUseCapture,

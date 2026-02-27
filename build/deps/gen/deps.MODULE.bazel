@@ -27,10 +27,10 @@ bazel_dep(name = "brotli", version = "1.2.0")
 # capnp-cpp
 http.archive(
     name = "capnp-cpp",
-    sha256 = "2e8519d77eb453463b1f2b1e22f40959fe560c143d78e7a51c606ce3bca30c5b",
-    strip_prefix = "capnproto-capnproto-ac7d90a/c++",
+    sha256 = "f502ac3ada732800929706f3d6dacb9bcf3639d3bffde6387f4dd5e0e11984f5",
+    strip_prefix = "capnproto-capnproto-a7654b2/c++",
     type = "tgz",
-    url = "https://github.com/capnproto/capnproto/tarball/ac7d90ae2e171a714be4348718fed6f26b0b85f2",
+    url = "https://github.com/capnproto/capnproto/tarball/a7654b2041731d0ee323aa2bdb7975c7ab903f5e",
 )
 use_repo(http, "capnp-cpp")
 
@@ -132,6 +132,16 @@ use_repo(http, "simdutf")
 
 # tcmalloc
 bazel_dep(name = "tcmalloc", version = "0.0.0-20250927-12f2552")
+
+# workerd-cxx
+http.archive(
+    name = "workerd-cxx",
+    sha256 = "8a580be60520488ab8bfb336bc0eb6b53a2d99989c82b4cd4c72f7db7bb4edf2",
+    strip_prefix = "cloudflare-workerd-cxx-c93b780",
+    type = "tgz",
+    url = "https://github.com/cloudflare/workerd-cxx/tarball/c93b7805fbe069d195049055a3ed21156fd76629",
+)
+use_repo(http, "workerd-cxx")
 
 # zlib
 bazel_dep(name = "zlib")

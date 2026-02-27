@@ -7,6 +7,7 @@
 #include <workerd/io/container.capnp.h>
 #include <workerd/io/worker-interface.h>
 #include <workerd/jsg/jsg.h>
+#include <workerd/jsg/url.h>
 #include <workerd/server/docker-api.capnp.h>
 
 #include <capnp/compat/json.h>
@@ -264,20 +265,40 @@ class ContainerClient::DockerPort final: public rpc::Container::Port::Server {
 // Forwards requests to the worker binding via SubrequestChannel.
 class InnerEgressService final: public kj::HttpService {
  public:
-  InnerEgressService(IoChannelFactory::SubrequestChannel& channel): channel(channel) {}
+  InnerEgressService(IoChannelFactory::SubrequestChannel& channel, kj::StringPtr url)
+      : channel(channel),
+        url(kj::str(url)) {}
 
   kj::Promise<void> request(kj::HttpMethod method,
-      kj::StringPtr url,
+      kj::StringPtr requestUri,
       const kj::HttpHeaders& headers,
       kj::AsyncInputStream& requestBody,
       Response& response) override {
     IoChannelFactory::SubrequestMetadata metadata;
     auto worker = channel.startRequest(kj::mv(metadata));
-    co_await worker->request(method, url, headers, requestBody, response);
+    auto urlForWorker = kj::str(requestUri);
+    // Probably only a path, try to get it from Host:
+    if (requestUri.startsWith("/")) {
+      auto baseUrl = kj::str(url);
+      // Use Host: when possible
+      KJ_IF_SOME(host, headers.get(kj::HttpHeaderId::HOST)) {
+        baseUrl = kj::str("http://", host);
+      }
+
+      // Parse url, if invalid, try to use the original requestUri (http://<ip>/<path>
+      KJ_IF_SOME(parsedUrl, jsg::Url::tryParse(requestUri, baseUrl.asPtr())) {
+        urlForWorker = kj::str(parsedUrl.getHref());
+      } else {
+        urlForWorker = kj::str(baseUrl, requestUri);
+      }
+    }
+
+    co_await worker->request(method, urlForWorker, headers, requestBody, response);
   }
 
  private:
   IoChannelFactory::SubrequestChannel& channel;
+  kj::String url;
 };
 
 // Outer HTTP service that handles CONNECT requests from the sidecar.
@@ -310,7 +331,7 @@ class EgressHttpService final: public kj::HttpService {
 
     KJ_IF_SOME(channel, mapping) {
       // Layer an HttpServer on top of the tunnel to handle HTTP parsing/serialization
-      auto innerService = kj::heap<InnerEgressService>(*channel);
+      auto innerService = kj::heap<InnerEgressService>(*channel, kj::str("http://", destAddr));
       auto innerServer =
           kj::heap<kj::HttpServer>(containerClient.timer, headerTable, *innerService);
 
@@ -421,6 +442,7 @@ kj::Promise<uint16_t> ContainerClient::startEgressListener(kj::String listenAddr
 void ContainerClient::stopEgressListener() {
   egressListenerTask = kj::none;
   egressHttpServer = kj::none;
+  egressListenerStarted.store(false, std::memory_order_release);
 }
 
 kj::Promise<ContainerClient::Response> ContainerClient::dockerApiRequest(kj::Network& network,
@@ -866,6 +888,21 @@ kj::Promise<void> ContainerClient::ensureSidecarStarted() {
   co_await startSidecarContainer();
 }
 
+kj::Promise<void> ContainerClient::ensureEgressListenerStarted() {
+  if (egressListenerStarted.exchange(true, std::memory_order_acquire)) {
+    co_return;
+  }
+
+  KJ_ON_SCOPE_FAILURE(egressListenerStarted.store(false, std::memory_order_release));
+
+  // Determine the listen address: on Linux, use the Docker bridge gateway IP
+  // and fall back to loopback (Docker Desktop
+  // routes host-gateway to host loopback through the VM).
+  auto ipamConfig = co_await getDockerBridgeIPAMConfig();
+  egressListenerPort = co_await startEgressListener(
+      gatewayForPlatform(kj::mv(ipamConfig.gateway)).orDefault(kj::str("127.0.0.1")));
+}
+
 kj::Promise<void> ContainerClient::setEgressHttp(SetEgressHttpContext context) {
   auto params = context.getParams();
   auto hostPortStr = kj::str(params.getHostPort());
@@ -875,14 +912,7 @@ kj::Promise<void> ContainerClient::setEgressHttp(SetEgressHttpContext context) {
   uint16_t port = parsed.port.orDefault(80);
   auto cidr = kj::mv(parsed.cidr);
 
-  if (egressListenerTask == kj::none) {
-    // Determine the listen address: on Linux, use the Docker bridge gateway IP
-    // and fall back to loopback (Docker Desktop
-    // routes host-gateway to host loopback through the VM).
-    auto ipamConfig = co_await getDockerBridgeIPAMConfig();
-    egressListenerPort = co_await startEgressListener(
-        gatewayForPlatform(kj::mv(ipamConfig.gateway)).orDefault(kj::str("127.0.0.1")));
-  }
+  co_await ensureEgressListenerStarted();
 
   if (containerStarted.load(std::memory_order_acquire)) {
     // Only try to create and start a sidecar container

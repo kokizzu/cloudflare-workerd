@@ -122,3 +122,37 @@ export const closeReasonUSVString = {
     );
   },
 };
+
+// Test that close() with code 1000 succeeds (Normal Closure).
+export const closeCode1000Succeeds = {
+  async test() {
+    const ws = new WebSocket('wss://example.com/');
+    doesNotThrow(() => ws.close(1000));
+  },
+};
+
+// Test that close() with codes in the 3000-4999 range succeeds.
+export const closeCode3000To4999Succeeds = {
+  async test() {
+    for (const code of [3000, 3500, 4000, 4999]) {
+      const ws = new WebSocket('wss://example.com/');
+      doesNotThrow(() => ws.close(code));
+    }
+  },
+};
+
+// Test that close() rejects codes outside the spec-allowed set.
+// Per WHATWG WebSocket spec, only 1000 and 3000-4999 are valid.
+export const closeCodeSpecInvalid = {
+  async test() {
+    for (const code of [999, 1001, 1004, 1005, 1006, 1015, 2999, 5000]) {
+      const ws = new WebSocket('wss://example.com/');
+      throws(
+        () => ws.close(code),
+        { name: 'InvalidAccessError' },
+        `close(${code}) should throw InvalidAccessError`
+      );
+      ws.close();
+    }
+  },
+};
