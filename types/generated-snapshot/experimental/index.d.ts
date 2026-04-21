@@ -3998,6 +3998,7 @@ interface Container {
   interceptOutboundHttps(addr: string, binding: Fetcher): Promise<void>;
   exec(cmd: string[], options?: ContainerExecOptions): Promise<ExecProcess>;
   interceptOutboundTcp(addr: string, binding: Fetcher): Promise<void>;
+  inspect(): Promise<ContainerInfo | null>;
 }
 interface ContainerDirectorySnapshot {
   id: string;
@@ -4029,6 +4030,9 @@ interface ContainerStartupOptions {
   labels?: Record<string, string>;
   directorySnapshots?: ContainerDirectorySnapshotRestoreParams[];
   containerSnapshot?: ContainerSnapshot;
+}
+interface ContainerInfo {
+  labels: Record<string, string>;
 }
 /**
  * The **`FileSystemHandle`** interface of the File System API is an object which represents a file or directory entry.
