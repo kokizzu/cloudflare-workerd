@@ -1521,4 +1521,13 @@ struct CompatibilityFlags @0x8f8c1b68151b6cef {
   # enabled, `hasSubscribers` becomes a read-only getter that evaluates directly
   # to a boolean, matching Node.js behavior.
   # See: https://nodejs.org/dist/latest-v20.x/docs/api/diagnostics_channel.html#channelhassubscribers
+
+  workflowsStepRollback @175 :Bool
+    $compatEnableFlag("workflows_step_rollback")
+    $experimental;
+  # When enabled, WorkflowEntrypoint wraps the step object so that step.do()
+  # and step.waitForEvent() return a StepPromise with a .rollback() method.
+  # The rollback function is bundled into the RPC call for the engine to invoke
+  # as a compensation action on failure. Without this flag, the step object is
+  # passed through unwrapped and .rollback() is not available.
 }
