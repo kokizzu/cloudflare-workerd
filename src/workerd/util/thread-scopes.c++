@@ -7,6 +7,7 @@
 #include <kj/debug.h>
 
 #include <atomic>
+#include <cstdlib>
 
 namespace workerd {
 
@@ -56,7 +57,14 @@ void setPredictableModeForTest() {
 }
 
 bool isGcStressModeForTest() {
-  return gcStressMode;
+  // Also honor the WORKERD_GC_STRESS environment variable so that gc-stress mode can be enabled
+  // in binaries that don't have a --gc-stress CLI flag (e.g., edgeworker's prod subcommand).
+  // The env var is checked once and cached; thread-safe via C++ static local initialization.
+  static const bool fromEnv = [] {
+    const char* val = std::getenv("WORKERD_GC_STRESS");
+    return val != nullptr && val[0] != '0' && val[0] != '\0';
+  }();
+  return gcStressMode || fromEnv;
 }
 
 void setGcStressModeForTest() {
