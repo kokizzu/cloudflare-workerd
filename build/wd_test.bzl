@@ -27,7 +27,7 @@ def wd_test(
      generate_default_variant: If True (default), generate the default variant with oldest compat date.
      generate_all_autogates_variant: If True (default), generate @all-autogates variants.
      generate_all_compat_flags_variant: If True (default), generate @all-compat-flags variants.
-     generate_gc_stress_variant: If True (default), generate @gc-stress variant (debug builds only).
+     generate_gc_stress_variant: If True (default), generate @gc-stress variant.
      compat_date: If specified, use this compat date for the default variant instead of 2000-01-01.
         Does not affect the @all-compat-flags variant which always uses 2999-12-31.
 

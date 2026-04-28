@@ -942,7 +942,7 @@ class CliMain final: public SchemaFileImpl::ErrorReporter {
       gcStress = true;
       return true;
     },
-            "Force a full V8 GC at each awaitIo continuation (debug builds only). "
+            "Force a full V8 GC at each awaitIo continuation. "
             "Detects KJ async objects on the JS heap without IoOwn wrapping. Very slow.")
         .addOption({"all-autogates"},
             [this]() {
