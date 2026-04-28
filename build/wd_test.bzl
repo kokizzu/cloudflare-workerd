@@ -135,7 +135,6 @@ def wd_test(
     # GC stress variant: forced full GC at every awaitIo continuation.
     # Uses newest compat date unless the test opted out of @all-compat-flags (meaning
     # it is compat-date-sensitive), in which case it uses the default compat date.
-    # Debug builds only — the GC injection points are gated on #ifndef NDEBUG.
     # Tagged off-by-default so it only runs when explicitly requested.
     if generate_gc_stress_variant:
         gc_stress_compat = newest_compat_args if generate_all_compat_flags_variant else default_compat_args
