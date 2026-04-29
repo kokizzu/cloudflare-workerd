@@ -284,6 +284,15 @@ def _python_bundle(version, *, pyodide_asm_wasm = None, pyodide_asm_js = None, p
     if emscripten_setup_override:
         _copy_to_generated(out_name = "emscriptenSetup.js", name = "emscriptenSetup", src = emscripten_setup_override, version = version)
     else:
+        expand_template(
+            name = "esbuild.config.mjs@" + version,
+            out = _out_path("esbuild.config.mjs", version),
+            substitutions = {
+                "%PYODIDE_VERSION%": version,
+            },
+            template = "internal/pool/esbuild.config.mjs",
+        )
+
         esbuild(
             name = "emscriptenSetup@" + version,
             # exclude emscriptenSetup from source set so that rules_ts won't also try to create a JS output
@@ -295,7 +304,7 @@ def _python_bundle(version, *, pyodide_asm_wasm = None, pyodide_asm_js = None, p
                 "internal/util.ts",
                 "internal/const.ts",
             ],
-            config = "internal/pool/esbuild.config.mjs",
+            config = _out_path("esbuild.config.mjs", version),
             entry_point = "internal/pool/emscriptenSetup.ts",
             external = [
                 "child_process",
