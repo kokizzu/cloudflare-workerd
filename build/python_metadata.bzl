@@ -158,6 +158,7 @@ BUNDLE_VERSION_INFO = _make_bundle_version_info([
     },
     {
         "name": "0.28.2",
+        "released": True,
         "pyodide_version": "0.28.2",
         "pyodide_date": "2025-01-16",
         "packages": PACKAGES_20250808,
@@ -181,11 +182,6 @@ BUNDLE_VERSION_INFO = _make_bundle_version_info([
                 "abi": "3.13",
                 "sha256": "955091f1bd2eb33255ff2633df990bedc96e2f6294e78f2b416078777394f942",
             },
-            # {
-            #     "name": "scipy",
-            #     "abi": "3.13",
-            #     "sha256": "4f1b6fc179bd5c6d3de68abc4aa9fca2aaecd09c5c8d357c2ecfedce7d621f3d",
-            # },
             {
                 "name": "shapely",
                 "abi": "3.13",
