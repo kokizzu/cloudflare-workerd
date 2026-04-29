@@ -578,8 +578,7 @@ kj::Promise<void> IoContext::IncomingRequest::drain() {
       .exclusiveJoin(context->onAbort().catch_([](kj::Exception&&) {}));
 }
 
-kj::Promise<IoContext_IncomingRequest::FinishScheduledResult> IoContext::IncomingRequest::
-    finishScheduled() {
+kj::Promise<EventOutcome> IoContext::IncomingRequest::finishScheduled() {
   // TODO(someday): In principle we should be able to support delivering the "scheduled" event type
   //   to an actor, and this may be important if we open up the whole of WorkerInterface to be
   //   callable from any stub. However, the logic around async tasks would have to be different. We
@@ -593,14 +592,19 @@ kj::Promise<IoContext_IncomingRequest::FinishScheduledResult> IoContext::Incomin
   KJ_ASSERT(context->incomingRequests.size() == 1);
   context->incomingRequests.front().waitedForWaitUntil = true;
 
-  auto timeoutPromise = context->limitEnforcer->limitScheduled().then(
-      [] { return IoContext_IncomingRequest::FinishScheduledResult::TIMEOUT; });
+  auto timeoutPromise = context->limitEnforcer->limitScheduled().then([] {
+    // TODO(soon): The limit being hit here is a wall time limit. Can we report an
+    // "exceededWallTime" outcome instead?
+    return EventOutcome::EXCEEDED_CPU;
+  });
   return context->waitUntilTasks.onEmpty()
-      .then([]() { return IoContext_IncomingRequest::FinishScheduledResult::COMPLETED; })
+      .then([]() { return EventOutcome::OK; })
       .exclusiveJoin(kj::mv(timeoutPromise))
       .exclusiveJoin(context->onAbort().then([] {
-    return IoContext_IncomingRequest::FinishScheduledResult::ABORTED;
-  }, [](kj::Exception&&) { return IoContext_IncomingRequest::FinishScheduledResult::ABORTED; }));
+    // abortFulfiller should only ever be rejected instead of being fulfilled, return an
+    // internalError outcome if it does happen
+    return EventOutcome::INTERNAL_ERROR;
+  }, [](kj::Exception&& e) { return RequestObserver::outcomeFromException(e); }));
 }
 
 class IoContext::PendingEvent: public kj::Refcounted {
@@ -1162,7 +1166,7 @@ void IoContext::taskFailed(kj::Exception&& exception) {
     KJ_IF_SOME(status, limitEnforcer->getLimitsExceeded()) {
       waitUntilStatusValue = status;
     } else {
-      waitUntilStatusValue = EventOutcome::EXCEPTION;
+      waitUntilStatusValue = RequestObserver::outcomeFromException(exception);
     }
   }
 

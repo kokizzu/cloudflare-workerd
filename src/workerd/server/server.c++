@@ -1605,21 +1605,7 @@ class RequestObserverWithTracer final: public RequestObserver, public WorkerInte
 
   void reportFailure(
       const kj::Exception& exception, FailureSource source = FailureSource::OTHER) override {
-    // Handle all exception based outcomes that can appear in workerd.
-    if (exception.getDetail(CPU_LIMIT_DETAIL_ID) != kj::none) {
-      outcome = EventOutcome::EXCEEDED_CPU;
-    } else if (exception.getDetail(MEMORY_LIMIT_DETAIL_ID) != kj::none) {
-      outcome = EventOutcome::EXCEEDED_MEMORY;
-    } else if (source == RequestObserver::FailureSource::DEFERRED_PROXY &&
-        exception.getType() == kj::Exception::Type::DISCONNECTED) {
-      outcome = EventOutcome::RESPONSE_STREAM_DISCONNECTED;
-    } else if (exception.getType() == kj::Exception::Type::OVERLOADED) {
-      // We use exception details to describe some overloaded exceptions accurately, if no such
-      // detail is present report internalError.
-      outcome = EventOutcome::INTERNAL_ERROR;
-    } else {
-      outcome = EventOutcome::EXCEPTION;
-    }
+    outcome = RequestObserver::outcomeFromException(exception, source);
   }
 
   void setOutcome(EventOutcome newOutcome) override {
