@@ -12,6 +12,7 @@
 #include <workerd/util/autogate.h>
 #include <workerd/util/own-util.h>
 #include <workerd/util/sentry.h>
+#include <workerd/util/thread-scopes.h>
 #include <workerd/util/uncaught-exception-source.h>
 
 #include <kj/debug.h>
@@ -1300,6 +1301,15 @@ void IoContext::runImpl(Runnable& runnable,
         }
       }
 
+      // With --gc-stress, force a full GC after microtasks run. This catches objects that
+      // became unreachable during JS execution / microtask processing (e.g., a
+      // ReadableStreamDefaultReader with no JS variable binding whose closed promise is
+      // still pending).
+      if (isGcStressModeForTest()) {
+        workerLock.getIsolate()->RequestGarbageCollectionForTesting(
+            v8::Isolate::kFullGarbageCollection);
+      }
+
       // Run FinalizationRegistry cleanup tasks without an IoContext
       {
         SuppressIoContextScope noIoCtxt;
@@ -1331,6 +1341,16 @@ void IoContext::runImpl(Runnable& runnable,
         }
       }
     });
+
+    // With --gc-stress, force a full GC before each awaitIo continuation. This helps detect
+    // KJ async objects (promises, streams, etc.) stored on the JS heap without IoOwn
+    // wrapping. Such objects crash under DISALLOW_KJ_IO_DESTRUCTORS_SCOPE when collected
+    // by GC, but normally the timing window is too brief to hit. Forcing GC at every
+    // continuation makes these bugs deterministic.
+    if (isGcStressModeForTest()) {
+      workerLock.getIsolate()->RequestGarbageCollectionForTesting(
+          v8::Isolate::kFullGarbageCollection);
+    }
 
     v8::TryCatch tryCatch(workerLock.getIsolate());
     try {
