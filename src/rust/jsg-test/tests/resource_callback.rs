@@ -438,7 +438,7 @@ impl PanicResource {
 ///
 /// 1. `catch_panic` converts the panic to an `"internal error"` JS exception
 ///    whose message does NOT expose the raw Rust panic string to JS.
-/// 2. `request_termination()` is called so no further JS executes.
+/// 2. `terminate_execution()` is called so no further JS executes.
 /// 3. The process is not aborted.
 ///
 /// This mirrors a real Worker fetch handler that delegates to a Rust-backed
@@ -459,7 +459,7 @@ fn panic_in_rust_backed_api_errors_request_and_terminates_isolate() {
 
         // Invoke the handler — the panic inside panicNow() is caught by
         // catch_panic, which calls throw_internal_error() then
-        // request_termination().  The internal error exception is set first
+        // terminate_execution().  The internal error exception is set first
         // and is visible to eval's TryCatch; it carries "internal error" in
         // its message while hiding the raw panic string from JS.
         let err = ctx
